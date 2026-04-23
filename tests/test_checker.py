@@ -110,10 +110,11 @@ class TestScanSingleFile:
         path = str(tmp_path / "test.pdf")
         doc = fitz.open()
         page = doc.new_page()
-        page.insert_text((72, 72), "PDF中的国家机密", fontsize=12)
+        # 使用英文避免中文字体问题
+        page.insert_text((72, 72), "secret keyword in PDF", fontsize=12)
         doc.save(path)
         doc.close()
-        result = scan_single_file(path, ["国家机密"], 50, ocr_enabled=False)
+        result = scan_single_file(path, ["secret keyword"], 50, ocr_enabled=False)
         assert len(result.matches) >= 1
 
     def test_scan_docx(self, tmp_path):

@@ -27,6 +27,10 @@ def main():
 
     subparsers.add_parser("list", help="列出所有关键词")
 
+    serve_parser = subparsers.add_parser("serve", help="启动 Web 管理端")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="绑定地址 (默认: 127.0.0.1)")
+    serve_parser.add_argument("--port", type=int, default=8000, help="端口 (默认: 8000)")
+
     config_parser = subparsers.add_parser("config", help="配置管理")
     config_sub = config_parser.add_subparsers(dest="config_command")
     config_sub.add_parser("show-ocr", help="查看 OCR 开关状态")
@@ -49,6 +53,8 @@ def main():
         _cmd_list(args)
     elif args.command == "config":
         _cmd_config(args)
+    elif args.command == "serve":
+        _cmd_serve(args)
 
 
 def _cmd_check(args):
@@ -76,17 +82,20 @@ def _cmd_check(args):
     total_files = len(result["results"]) + len(result["failures"])
     print(f"扫描完成: 共扫描 {total_files} 个文件, 发现 {total_matches} 处匹配, 耗时 {elapsed:.2f}s")
     print(f"报告已生成: {args.output}")
+    sys.exit(0)
 
 
 def _cmd_add(args):
     for word in args.words:
         add_keyword(word)
         print(f"已添加: {word}")
+    sys.exit(0)
 
 
 def _cmd_remove(args):
     remove_keyword(args.word)
     print(f"已删除: {args.word}")
+    sys.exit(0)
 
 
 def _cmd_list(args):
@@ -94,9 +103,10 @@ def _cmd_list(args):
     keywords = config["keywords"]
     if not keywords:
         print("关键词列表为空")
-        return
-    for kw in keywords:
-        print(kw)
+    else:
+        for kw in keywords:
+            print(kw)
+    sys.exit(0)
 
 
 def _cmd_config(args):
@@ -111,6 +121,33 @@ def _cmd_config(args):
     else:
         print("请指定配置命令: show-ocr 或 set-ocr", file=sys.stderr)
         sys.exit(1)
+
+
+def _cmd_serve(args):
+    """启动 Web 管理端"""
+    import uvicorn
+    import os
+
+    # 获取 web-admin 路径
+    web_admin_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "web-admin", "main.py"
+    )
+
+    print(f"启动敏感词 Web 管理端...")
+    print(f"访问地址: http://{args.host}:{args.port}")
+    print("按 Ctrl+C 停止服务")
+
+    # 配置并启动 uvicorn
+    config = uvicorn.Config(
+        "web-admin.main:app",
+        host=args.host,
+        port=args.port,
+        log_level="info",
+        reload=False,
+    )
+    server = uvicorn.Server(config)
+    server.run()
 
 
 if __name__ == "__main__":
