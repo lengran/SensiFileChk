@@ -2,6 +2,20 @@
 
 ## 概览
 
+**开发环境要求**: 使用虚拟环境（venv 或 conda），详见 `docs/architecture.md` 8.1 节。
+
+```bash
+# venv 方式
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+
+# conda 方式
+conda create -n sensi-check python=3.10
+conda activate sensi-check
+pip install -e .
+```
+
 | 阶段 | 内容 | 预计工作量 | 前置依赖 |
 |------|------|-----------|---------|
 | Phase 1 | 项目基础 | 2-3 天 | 无 |

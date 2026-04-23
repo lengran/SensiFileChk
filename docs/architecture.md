@@ -310,6 +310,25 @@ jinja2>=3.1.2            # Web 模板
 uvicorn>=0.24.0          # Web 服务器
 ```
 
+## 8.1 虚拟环境
+
+开发时必须使用虚拟环境，避免污染系统 Python。
+
+**推荐：venv（Python 标准库）**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate        # Linux/macOS
+.venv\Scripts\activate           # Windows
+pip install -e .
+```
+
+**替代：conda**
+```bash
+conda create -n sensi-check python=3.10
+conda activate sensi-check
+pip install -e .
+```
+
 ## 9. 跨平台说明
 
 | 功能 | Linux | macOS | Windows |
