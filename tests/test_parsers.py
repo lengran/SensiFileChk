@@ -252,11 +252,21 @@ class TestArchiveParser:
         with pytest.raises(ParserError, match="深度超限"):
             deep_parser.parse(zip_path)
 
-    def test_zip_slip_protection(self, archive_parser, tmp_path):
+    def test_zip_slip_protection_dotdot(self, archive_parser, tmp_path):
+        """Zip Slip: .. 路径检测"""
         import zipfile
         zip_path = str(tmp_path / "slip.zip")
         with zipfile.ZipFile(zip_path, "w") as zf:
             zf.writestr("../../../../../tmp/evil.txt", "malicious")
+        with pytest.raises(ParserError):
+            archive_parser.parse(zip_path)
+
+    def test_zip_slip_protection_absolute_path(self, archive_parser, tmp_path):
+        """Zip Slip: 绝对路径检测"""
+        import zipfile
+        zip_path = str(tmp_path / "abs_slip.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("/etc/passwd", "malicious")
         with pytest.raises(ParserError):
             archive_parser.parse(zip_path)
 

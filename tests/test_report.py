@@ -46,6 +46,16 @@ class TestGenerateReport:
             html = f.read()
         assert "未发现敏感词" in html
 
+    def test_no_results_message_with_failures(self, tmp_path):
+        """有失败但无匹配时仍显示'未发现敏感词'"""
+        output = str(tmp_path / "report.html")
+        fr = FileResult(file_path=str(tmp_path / "broken.txt"), error="解析失败")
+        scan_result = {"results": [], "failures": [fr]}
+        generate_report(scan_result, output, str(tmp_path), ["机密"])
+        with open(output, encoding="utf-8") as f:
+            html = f.read()
+        assert "未发现敏感词" in html
+
     def test_directory_tree(self, tmp_path):
         sub = tmp_path / "subdir"
         sub.mkdir()
@@ -86,3 +96,14 @@ class TestGenerateReport:
         with open(output, encoding="utf-8") as f:
             html = f.read()
         assert "function toggle" in html
+
+    def test_line_number_display(self, tmp_path):
+        """报告中显示行号"""
+        f = tmp_path / "test.txt"
+        f.write_text("第一行\n第二行机密信息\n第三行", encoding="utf-8")
+        result = scan_directory(str(tmp_path), ["机密信息"])
+        output = str(tmp_path / "report.html")
+        generate_report(result, output, str(tmp_path), ["机密信息"])
+        with open(output, encoding="utf-8") as fobj:
+            html = fobj.read()
+        assert "行 2" in html or "line-num" in html

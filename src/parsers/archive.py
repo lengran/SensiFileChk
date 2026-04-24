@@ -9,6 +9,7 @@ from .base import BaseParser, ParserError
 
 MAX_DEPTH = 10
 MAX_SIZE = 500 * 1024 * 1024
+MAX_TOTAL_SIZE = 500 * 1024 * 1024
 
 
 class ArchiveParser(BaseParser):
@@ -54,8 +55,48 @@ class ArchiveParser(BaseParser):
 
     def _parse_gz(self, file_path: str) -> str:
         try:
-            with gzip.open(file_path, "rt", encoding="utf-8", errors="replace") as f:
-                return f.read()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                base_name = os.path.basename(file_path)
+                if base_name.endswith(".gz"):
+                    base_name = base_name[:-3]
+                if base_name.endswith(".tar"):
+                    base_name = base_name[:-4]
+                if not base_name:
+                    base_name = "decompressed"
+
+                out_path = os.path.join(tmpdir, base_name)
+                with gzip.open(file_path, "rb") as f_in:
+                    with open(out_path, "wb") as f_out:
+                        total = 0
+                        while True:
+                            chunk = f_in.read(8192)
+                            if not chunk:
+                                break
+                            total += len(chunk)
+                            if total > MAX_SIZE:
+                                raise ParserError(f"gz 解压后文件过大: {file_path}")
+                            f_out.write(chunk)
+
+                _, ext = os.path.splitext(base_name)
+                ext = ext.lower()
+
+                archive_exts = {".zip", ".tar", ".tgz", ".gz", ".rar", ".7z"}
+                if ext in archive_exts:
+                    inner_parser = ArchiveParser(
+                        inner_parser_factory=self._inner_parser_factory,
+                        depth=self._depth + 1,
+                    )
+                    return inner_parser.parse(out_path)
+
+                if self._inner_parser_factory:
+                    parser = self._inner_parser_factory(ext)
+                    if parser:
+                        return parser.parse(out_path)
+
+                with open(out_path, "r", encoding="utf-8", errors="replace") as f:
+                    return f.read()
+        except ParserError:
+            raise
         except OSError as e:
             raise ParserError(f"解压 gz 失败: {file_path}: {e}") from e
 
@@ -83,8 +124,27 @@ class ArchiveParser(BaseParser):
         except Exception as e:
             raise ParserError(f"解压 7z 失败: {file_path}: {e}") from e
 
+    def _check_zip_path(self, name: str):
+        normalized = name.replace("\\", "/")
+        if normalized.startswith("/"):
+            raise ParserError(f"Zip Slip 检测: 不安全路径 {name}")
+        parts = normalized.split("/")
+        for part in parts:
+            if part == "..":
+                raise ParserError(f"Zip Slip 检测: 不安全路径 {name}")
+
+    def _check_tar_path(self, name: str):
+        normalized = name.replace("\\", "/")
+        if normalized.startswith("/"):
+            raise ParserError(f"不安全路径: {name}")
+        parts = normalized.split("/")
+        for part in parts:
+            if part == "..":
+                raise ParserError(f"不安全路径: {name}")
+
     def _extract_archive(self, zf: zipfile.ZipFile, archive_path: str) -> str:
         results = []
+        total_size = 0
         with tempfile.TemporaryDirectory() as tmpdir:
             for info in zf.infolist():
                 if info.is_dir():
@@ -92,17 +152,23 @@ class ArchiveParser(BaseParser):
                 self._check_zip_path(info.filename)
                 if info.file_size > MAX_SIZE:
                     raise ParserError(f"压缩包内文件过大: {info.filename}")
+                total_size += info.file_size
+                if total_size > MAX_TOTAL_SIZE:
+                    raise ParserError(f"压缩包总大小超限 ({MAX_TOTAL_SIZE // (1024*1024)}MB)")
                 try:
                     extracted = zf.extract(info, tmpdir)
                     result = self._process_inner_file(extracted, info.filename)
                     if result:
                         results.append(f"[{info.filename}]\n{result}")
+                except ParserError as e:
+                    results.append(f"[{info.filename}] 解析失败: {e}")
                 except Exception as e:
                     results.append(f"[{info.filename}] 解压失败: {e}")
         return "\n\n".join(results)
 
     def _extract_tar_archive(self, tf: tarfile.TarFile, archive_path: str) -> str:
         results = []
+        total_size = 0
         with tempfile.TemporaryDirectory() as tmpdir:
             for member in tf.getmembers():
                 if not member.isfile():
@@ -110,28 +176,42 @@ class ArchiveParser(BaseParser):
                 self._check_tar_path(member.name)
                 if member.size > MAX_SIZE:
                     raise ParserError(f"压缩包内文件过大: {member.name}")
+                total_size += member.size
+                if total_size > MAX_TOTAL_SIZE:
+                    raise ParserError(f"压缩包总大小超限 ({MAX_TOTAL_SIZE // (1024*1024)}MB)")
                 try:
                     tf.extract(member, tmpdir, filter="data")
                     extracted = os.path.join(tmpdir, member.name)
                     result = self._process_inner_file(extracted, member.name)
                     if result:
                         results.append(f"[{member.name}]\n{result}")
+                except ParserError as e:
+                    results.append(f"[{member.name}] 解析失败: {e}")
                 except Exception as e:
                     results.append(f"[{member.name}] 解压失败: {e}")
         return "\n\n".join(results)
 
     def _extract_rar_archive(self, rf, archive_path: str) -> str:
         results = []
+        total_size = 0
         with tempfile.TemporaryDirectory() as tmpdir:
             for info in rf.infolist():
                 if info.is_dir():
                     continue
+                if hasattr(info, 'file_size') and info.file_size > MAX_SIZE:
+                    raise ParserError(f"压缩包内文件过大: {info.filename}")
+                if hasattr(info, 'file_size'):
+                    total_size += info.file_size
+                    if total_size > MAX_TOTAL_SIZE:
+                        raise ParserError(f"压缩包总大小超限 ({MAX_TOTAL_SIZE // (1024*1024)}MB)")
                 try:
                     rf.extract(info, tmpdir)
                     extracted = os.path.join(tmpdir, info.filename)
                     result = self._process_inner_file(extracted, info.filename)
                     if result:
                         results.append(f"[{info.filename}]\n{result}")
+                except ParserError as e:
+                    results.append(f"[{info.filename}] 解析失败: {e}")
                 except Exception as e:
                     results.append(f"[{info.filename}] 解压失败: {e}")
         return "\n\n".join(results)
@@ -143,9 +223,16 @@ class ArchiveParser(BaseParser):
                 sz.extractall(tmpdir)
             except Exception as e:
                 raise ParserError(f"7z 解压失败: {e}") from e
+            total_size = 0
             for root, _dirs, files in os.walk(tmpdir):
                 for fname in files:
                     extracted = os.path.join(root, fname)
+                    fsize = os.path.getsize(extracted)
+                    if fsize > MAX_SIZE:
+                        raise ParserError(f"压缩包内文件过大: {fname}")
+                    total_size += fsize
+                    if total_size > MAX_TOTAL_SIZE:
+                        raise ParserError(f"压缩包总大小超限 ({MAX_TOTAL_SIZE // (1024*1024)}MB)")
                     rel = os.path.relpath(extracted, tmpdir)
                     result = self._process_inner_file(extracted, rel)
                     if result:
@@ -172,14 +259,6 @@ class ArchiveParser(BaseParser):
             if parser:
                 try:
                     return parser.parse(file_path)
-                except ParserError:
-                    return ""
+                except ParserError as e:
+                    return f"[解析失败] {e}"
         return ""
-
-    def _check_zip_path(self, name: str):
-        if ".." in name.replace("\\", "/"):
-            raise ParserError(f"Zip Slip 检测: 不安全路径 {name}")
-
-    def _check_tar_path(self, name: str):
-        if name.startswith("/") or ".." in name.replace("\\", "/"):
-            raise ParserError(f"不安全路径: {name}")

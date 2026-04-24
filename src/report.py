@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from collections import defaultdict
 from html import escape
@@ -31,7 +32,7 @@ def generate_report(scan_result: dict, output_path: str, scan_dir: str, keywords
         failures_html=failures_html,
         failure_count=len(failures),
         no_results_style="display:none" if results else "",
-        no_results_msg="未发现敏感词" if not results and not failures else "",
+        no_results_msg="未发现敏感词" if not results else "",
     )
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -69,8 +70,11 @@ def _render_tree(node: dict, level: int) -> str:
         match_html = ""
         for m in fr.matches:
             ctx = _highlight_keyword(escape(m.context), escape(m.keyword))
+            line_info = f'行 {m.line_number}' if m.line_number else ''
             match_html += (
-                f'<div class="match"><span class="keyword">{escape(m.keyword)}</span>'
+                f'<div class="match">'
+                f'<span class="line-num">{escape(line_info)}</span>'
+                f'<span class="keyword">{escape(m.keyword)}</span>'
                 f'<span class="context">…{ctx}…</span></div>'
             )
         html_parts.append(
@@ -83,7 +87,10 @@ def _render_tree(node: dict, level: int) -> str:
 
 
 def _highlight_keyword(context: str, keyword: str) -> str:
-    return context.replace(keyword, f'<mark class="highlight">{keyword}</mark>')
+    if not keyword:
+        return context
+    pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+    return pattern.sub(f'<mark class="highlight">{keyword}</mark>', context)
 
 
 def _render_failures(failures: list[FileResult], scan_dir: str) -> str:
@@ -126,6 +133,7 @@ h1 {{ color: #333; border-bottom: 2px solid #e74c3c; padding-bottom: 10px; }}
 .file-name {{ font-weight: bold; color: #2c3e50; padding: 4px 0; }}
 .match {{ padding: 4px 10px; margin: 2px 0; background: #fef9e7; border-left: 3px solid #f39c12; }}
 .keyword {{ color: #e74c3c; font-weight: bold; margin-right: 8px; }}
+.line-num {{ color: #888; font-size: 0.85em; margin-right: 8px; }}
 .context {{ color: #555; }}
 mark.highlight {{ background: #e74c3c; color: #fff; padding: 1px 3px; border-radius: 2px; }}
 .failure-header {{ background: #fee; }}

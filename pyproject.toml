@@ -1,3 +1,38 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sensifilechk"
+version = "1.0.0"
+description = "保密检查工具 — 本地文件敏感词扫描"
+requires-python = ">=3.10"
+dependencies = [
+    "pymupdf>=1.23.0",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0.0",
+    "python-docx>=0.8.11",
+    "python-pptx>=0.6.23",
+    "openpyxl>=3.1.0",
+    "rarfile>=4.0",
+    "py7zr>=0.20.0",
+    "fastapi>=0.104.0",
+    "jinja2>=3.1.2",
+    "uvicorn>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+]
+
+[project.scripts]
+sensi-check = "src.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["src*", "web_admin*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

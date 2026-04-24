@@ -13,15 +13,12 @@ class TestCliCheckCommand:
     """测试 check 子命令"""
 
     def test_check_with_valid_keywords(self, tmp_path, temp_config):
-        # 设置测试环境
         from src.config import save_keywords
         save_keywords(["国家机密"], False)
 
-        # 创建测试文件
         test_file = tmp_path / "test.txt"
         test_file.write_text("这是国家机密文件", encoding="utf-8")
 
-        # 运行 check 命令
         from src.cli import main
         output_path = str(tmp_path / "report.html")
 
@@ -32,14 +29,12 @@ class TestCliCheckCommand:
                 except SystemExit as e:
                     assert e.code == 0
 
-        # 验证报告文件已生成
         assert os.path.exists(output_path)
         with open(output_path, encoding='utf-8') as f:
             content = f.read()
             assert "保密检查报告" in content
 
     def test_check_empty_keywords(self, tmp_path, temp_config):
-        # 不设置关键词
         from src.config import save_keywords
         save_keywords([], False)
 
@@ -51,18 +46,15 @@ class TestCliCheckCommand:
                 assert exc_info.value.code == 1
 
     def test_check_with_workers(self, tmp_path, temp_config):
-        # 设置关键词
         from src.config import save_keywords
         save_keywords(["机密"], False)
 
-        # 创建测试文件
         test_file = tmp_path / "test.txt"
         test_file.write_text("包含机密信息", encoding="utf-8")
 
         from src.cli import main
         output_path = str(tmp_path / "report.html")
 
-        # 使用多 worker 扫描
         with patch('sys.argv', ['sensi-check', 'check', str(tmp_path), '-o', output_path, '-w', '2']):
             with pytest.raises(SystemExit) as exc_info:
                 main()
@@ -71,7 +63,6 @@ class TestCliCheckCommand:
         assert os.path.exists(output_path)
 
     def test_check_no_archives(self, tmp_path, temp_config):
-        # 设置关键词
         from src.config import save_keywords
         save_keywords(["机密"], False)
 
@@ -79,6 +70,22 @@ class TestCliCheckCommand:
         output_path = str(tmp_path / "report.html")
 
         with patch('sys.argv', ['sensi-check', 'check', str(tmp_path), '-o', output_path, '-n']):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 0
+
+    def test_check_with_context_param(self, tmp_path, temp_config):
+        """TC-CLI-003: --context 参数测试"""
+        from src.config import save_keywords
+        save_keywords(["机密"], False)
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("前文内容 机密信息 后文内容", encoding="utf-8")
+
+        from src.cli import main
+        output_path = str(tmp_path / "report.html")
+
+        with patch('sys.argv', ['sensi-check', 'check', str(tmp_path), '-o', output_path, '--context', '20']):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code == 0
@@ -117,18 +124,15 @@ class TestCliAddCommand:
         from src.cli import main
         from src.config import load_keywords
 
-        # 先添加一个
         with patch('sys.argv', ['sensi-check', 'add', '词1']):
             with pytest.raises(SystemExit):
                 main()
 
-        # 再次添加
         with patch('sys.argv', ['sensi-check', 'add', '词1']):
             with pytest.raises(SystemExit):
                 main()
 
         config = load_keywords()
-        # 不应该重复
         assert config["keywords"].count("词1") == 1
 
 
@@ -139,10 +143,8 @@ class TestCliRemoveCommand:
         from src.cli import main
         from src.config import add_keyword, load_keywords
 
-        # 先添加
         add_keyword("待删除词")
 
-        # 再删除
         with patch('sys.argv', ['sensi-check', 'remove', '待删除词']):
             with pytest.raises(SystemExit) as exc_info:
                 main()
@@ -152,7 +154,6 @@ class TestCliRemoveCommand:
         assert "待删除词" not in config["keywords"]
 
     def test_remove_nonexistent_keyword(self, temp_config):
-        # 删除不存在的词不应报错
         from src.cli import main
         from src.config import load_keywords
 
@@ -161,7 +162,6 @@ class TestCliRemoveCommand:
                 main()
             assert exc_info.value.code == 0
 
-        # 配置应正常
         config = load_keywords()
         assert config is not None
 
@@ -173,7 +173,6 @@ class TestCliListCommand:
         from src.cli import main
         from src.config import save_keywords
 
-        # 确保关键词列表为空
         save_keywords([], False)
 
         with patch('sys.argv', ['sensi-check', 'list']):
@@ -200,6 +199,22 @@ class TestCliListCommand:
                 assert "关键词A" in output
                 assert "关键词B" in output
 
+    def test_list_with_count(self, temp_config):
+        """list --count 测试"""
+        from src.cli import main
+        from src.config import add_keyword
+
+        add_keyword("词A")
+        add_keyword("词B")
+
+        with patch('sys.argv', ['sensi-check', 'list', '--count']):
+            with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+                assert exc_info.value.code == 0
+                output = mock_stdout.getvalue()
+                assert "2" in output
+
 
 class TestCliConfigCommand:
     """测试 config 子命令"""
@@ -208,7 +223,7 @@ class TestCliConfigCommand:
         from src.cli import main
         from src.config import save_keywords
 
-        save_keywords(["测试词"], True)  # 开启 OCR
+        save_keywords(["测试词"], True)
 
         with patch('sys.argv', ['sensi-check', 'config', 'show-ocr']):
             with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
@@ -231,7 +246,6 @@ class TestCliConfigCommand:
         from src.cli import main
         from src.config import load_keywords, save_keywords
 
-        # 先开启
         save_keywords(["测试词"], True)
 
         with patch('sys.argv', ['sensi-check', 'config', 'set-ocr', 'off']):
@@ -257,15 +271,13 @@ class TestCliServeCommand:
     def test_serve_command_parses_args(self, temp_config):
         from src.cli import main
 
-        # 测试参数解析（不实际启动服务器）
         with patch('sys.argv', ['sensi-check', 'serve', '--port', '8888']):
             with patch('uvicorn.Server.run') as mock_run:
                 with patch('sys.stdout', new_callable=StringIO):
-                    # 设置超时避免卡住
                     import signal
                     def timeout_handler(signum, frame):
                         raise TimeoutError()
-                    signal.signal(signal.SIGALRM, timeout_handler)
+                    old_handler = signal.signal(signal.SIGALRM, timeout_handler)
                     signal.alarm(1)
                     try:
                         main()
@@ -273,8 +285,8 @@ class TestCliServeCommand:
                         pass
                     finally:
                         signal.alarm(0)
+                        signal.signal(signal.SIGALRM, old_handler)
 
-                    # 验证服务器被启动
                     mock_run.assert_called()
 
 

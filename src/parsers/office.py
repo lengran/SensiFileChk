@@ -7,7 +7,9 @@ from .base import BaseParser, ParserError
 
 
 class OfficeParser(BaseParser):
-    _PLATFORM = platform.system()
+    @property
+    def _platform(self) -> str:
+        return platform.system()
 
     def parse(self, file_path: str) -> str:
         _, ext = os.path.splitext(file_path)
@@ -57,14 +59,16 @@ class OfficeParser(BaseParser):
             from openpyxl import load_workbook
 
             wb = load_workbook(file_path, read_only=True, data_only=True)
-            texts = []
-            for ws in wb.worksheets:
-                for row in ws.iter_rows(values_only=True):
-                    for cell in row:
-                        if cell is not None:
-                            texts.append(str(cell))
-            wb.close()
-            return "\n".join(texts)
+            try:
+                texts = []
+                for ws in wb.worksheets:
+                    for row in ws.iter_rows(values_only=True):
+                        for cell in row:
+                            if cell is not None:
+                                texts.append(str(cell))
+                return "\n".join(texts)
+            finally:
+                wb.close()
         except Exception as e:
             raise ParserError(f"解析 xlsx 失败: {file_path}: {e}") from e
 
@@ -78,14 +82,15 @@ class OfficeParser(BaseParser):
         return self._parse_legacy(file_path, "ppt")
 
     def _parse_legacy(self, file_path: str, ext: str) -> str:
-        if self._PLATFORM == "Linux":
+        current_platform = self._platform
+        if current_platform == "Linux":
             return self._parse_with_antiword(file_path)
-        elif self._PLATFORM == "Darwin":
+        elif current_platform == "Darwin":
             return self._parse_with_catdoc(file_path)
-        elif self._PLATFORM == "Windows":
+        elif current_platform == "Windows":
             return self._parse_with_pywin32(file_path, ext)
         else:
-            raise ParserError(f"不支持的平台: {self._PLATFORM}")
+            raise ParserError(f"不支持的平台: {current_platform}")
 
     def _parse_with_antiword(self, file_path: str) -> str:
         try:

@@ -7,8 +7,9 @@
 - **多格式支持**: 支持 .txt, .pdf, .doc/.docx, .xls/.xlsx, .ppt/.pptx 等常见文档格式
 - **压缩包扫描**: 支持 .zip, .tar/.tar.gz, .rar, .7z 压缩包的递归解压扫描
 - **多核并行**: 使用多进程并行扫描，充分利用多核 CPU
+- **英文大小写不敏感**: 英文关键词自动忽略大小写匹配
 - **PDF OCR**: 可选的图片 PDF 文字识别（基于 Tesseract）
-- **HTML 报告**: 生成美观的 HTML 报告，支持目录折叠、敏感词高亮
+- **HTML 报告**: 生成美观的 HTML 报告，支持目录折叠、敏感词高亮、行号显示
 - **Web 管理端**: 浏览器端管理敏感词库和 OCR 配置
 
 ## 安装
@@ -98,6 +99,9 @@ sensi-check remove <关键词>
 
 # 列出所有关键词
 sensi-check list
+
+# 列出关键词并显示数量
+sensi-check list --count
 ```
 
 ### 配置管理 (config)
@@ -144,7 +148,7 @@ pytest tests/ --cov=src --cov-report=html
 │   ├── config.py           # 配置读写
 │   ├── report.py           # 报告生成
 │   └── parsers/            # 文件解析器
-├── web-admin/              # Web 管理端
+├── web_admin/              # Web 管理端
 └── tests/                  # 测试文件
 ```
 

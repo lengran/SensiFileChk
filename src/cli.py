@@ -3,7 +3,7 @@ import sys
 import time
 
 from .checker import scan_directory
-from .config import load_keywords, add_keyword, remove_keyword, save_keywords
+from .config import load_keywords, add_keyword, add_keywords, remove_keyword, save_keywords
 from .report import generate_report
 
 
@@ -25,7 +25,8 @@ def main():
     remove_parser = subparsers.add_parser("remove", help="删除关键词")
     remove_parser.add_argument("word", help="要删除的关键词")
 
-    subparsers.add_parser("list", help="列出所有关键词")
+    list_parser = subparsers.add_parser("list", help="列出所有关键词")
+    list_parser.add_argument("--count", action="store_true", help="显示关键词数量")
 
     serve_parser = subparsers.add_parser("serve", help="启动 Web 管理端")
     serve_parser.add_argument("--host", default="127.0.0.1", help="绑定地址 (默认: 127.0.0.1)")
@@ -86,15 +87,18 @@ def _cmd_check(args):
 
 
 def _cmd_add(args):
+    add_keywords(args.words)
     for word in args.words:
-        add_keyword(word)
         print(f"已添加: {word}")
     sys.exit(0)
 
 
 def _cmd_remove(args):
-    remove_keyword(args.word)
-    print(f"已删除: {args.word}")
+    removed = remove_keyword(args.word)
+    if removed:
+        print(f"已删除: {args.word}")
+    else:
+        print(f"关键词不存在: {args.word}")
     sys.exit(0)
 
 
@@ -106,6 +110,8 @@ def _cmd_list(args):
     else:
         for kw in keywords:
             print(kw)
+        if args.count:
+            print(f"\n共 {len(keywords)} 个关键词")
     sys.exit(0)
 
 
@@ -124,23 +130,14 @@ def _cmd_config(args):
 
 
 def _cmd_serve(args):
-    """启动 Web 管理端"""
     import uvicorn
-    import os
-
-    # 获取 web-admin 路径
-    web_admin_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "web-admin", "main.py"
-    )
 
     print(f"启动敏感词 Web 管理端...")
     print(f"访问地址: http://{args.host}:{args.port}")
     print("按 Ctrl+C 停止服务")
 
-    # 配置并启动 uvicorn
     config = uvicorn.Config(
-        "web-admin.main:app",
+        "web_admin.main:app",
         host=args.host,
         port=args.port,
         log_level="info",

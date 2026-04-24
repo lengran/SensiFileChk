@@ -1,4 +1,5 @@
 import os
+import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Optional
@@ -23,6 +24,7 @@ class Match:
     start: int
     end: int
     context: str
+    line_number: int = 0
 
 
 @dataclass
@@ -69,23 +71,39 @@ def discover_files(dir_path: str, extensions: Optional[set] = None) -> list[str]
     return sorted(result)
 
 
+def _compute_line_number(text: str, char_pos: int) -> int:
+    return text[:char_pos].count('\n') + 1
+
+
 def _match_keywords(text: str, keywords: list[str]) -> list[Match]:
     matches = []
     for keyword in keywords:
         if not keyword:
             continue
-        start = 0
-        while True:
-            idx = text.find(keyword, start)
-            if idx == -1:
-                break
-            matches.append(Match(
-                keyword=keyword,
-                start=idx,
-                end=idx + len(keyword),
-                context="",
-            ))
-            start = idx + 1
+        if keyword.isascii() and keyword.isalpha():
+            pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+            for m in pattern.finditer(text):
+                matches.append(Match(
+                    keyword=keyword,
+                    start=m.start(),
+                    end=m.end(),
+                    context="",
+                    line_number=_compute_line_number(text, m.start()),
+                ))
+        else:
+            start = 0
+            while True:
+                idx = text.find(keyword, start)
+                if idx == -1:
+                    break
+                matches.append(Match(
+                    keyword=keyword,
+                    start=idx,
+                    end=idx + len(keyword),
+                    context="",
+                    line_number=_compute_line_number(text, idx),
+                ))
+                start = idx + 1
     matches.sort(key=lambda m: m.start)
     return matches
 
@@ -136,9 +154,10 @@ def scan_directory(
     files = discover_files(dir_path)
     results = []
     failures = []
+    total = len(files)
 
     if num_workers <= 1:
-        for fpath in files:
+        for idx, fpath in enumerate(files):
             fr = scan_single_file(fpath, keywords, context_chars, ocr_enabled, check_archives)
             if fr.error:
                 failures.append(fr)
@@ -148,6 +167,8 @@ def scan_directory(
                 results.append(fr)
                 if verbose:
                     print(f"  [命中] {fpath}: {len(fr.matches)} 处匹配")
+            if verbose and total > 0:
+                print(f"  [进度] {idx + 1}/{total}")
     else:
         tasks = [
             (fpath, keywords, context_chars, ocr_enabled, check_archives)

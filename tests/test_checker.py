@@ -39,6 +39,33 @@ class TestMatchKeywords:
         matches = _match_keywords("机密文件和机密数据", ["机密"])
         assert len(matches) == 2
 
+    def test_case_insensitive_english(self):
+        """大小写不敏感匹配（英文关键词）"""
+        matches = _match_keywords("This is SECRET information", ["secret"])
+        assert len(matches) == 1
+        assert matches[0].keyword == "secret"
+
+    def test_case_insensitive_mixed(self):
+        matches = _match_keywords("Secret and SECRET and secret", ["secret"])
+        assert len(matches) == 3
+
+    def test_chinese_keyword_still_case_sensitive(self):
+        """中文关键词保持大小写敏感（中文无大小写）"""
+        matches = _match_keywords("这是国家机密", ["国家机密"])
+        assert len(matches) == 1
+
+    def test_line_number_tracking(self):
+        """行号追踪"""
+        text = "第一行\n第二行机密信息\n第三行"
+        matches = _match_keywords(text, ["机密信息"])
+        assert len(matches) == 1
+        assert matches[0].line_number == 2
+
+    def test_line_number_first_line(self):
+        text = "机密在开头"
+        matches = _match_keywords(text, ["机密"])
+        assert matches[0].line_number == 1
+
 
 class TestExtractContext:
     def test_middle_context(self):
@@ -110,7 +137,6 @@ class TestScanSingleFile:
         path = str(tmp_path / "test.pdf")
         doc = fitz.open()
         page = doc.new_page()
-        # 使用英文避免中文字体问题
         page.insert_text((72, 72), "secret keyword in PDF", fontsize=12)
         doc.save(path)
         doc.close()
@@ -144,6 +170,13 @@ class TestScanSingleFile:
         ws["A1"] = "xlsx中的国家机密"
         wb.save(path)
         result = scan_single_file(path, ["国家机密"], 50)
+        assert len(result.matches) == 1
+
+    def test_case_insensitive_scan(self, tmp_path):
+        """大小写不敏感扫描"""
+        f = tmp_path / "test.txt"
+        f.write_text("This is SECRET data", encoding="utf-8")
+        result = scan_single_file(str(f), ["secret"], 50)
         assert len(result.matches) == 1
 
 
