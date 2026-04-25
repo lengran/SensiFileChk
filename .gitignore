@@ -9,3 +9,4 @@ build/
 .env/
 *.html
 !.gitkeep
+config/keywords.json

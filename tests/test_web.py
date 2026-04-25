@@ -145,6 +145,30 @@ class TestCliGenerate:
         data = response.json()
         assert "sensi-check" in data["command"]
 
+    def test_generate_with_workers(self):
+        save_keywords(["词1"], False)
+
+        response = client.get("/api/cli/generate?workers=4")
+        assert response.status_code == 200
+        data = response.json()
+        assert "-w 4" in data["command"]
+
+    def test_generate_without_workers(self):
+        save_keywords(["词1"], False)
+
+        response = client.get("/api/cli/generate")
+        assert response.status_code == 200
+        data = response.json()
+        assert "-w" not in data["command"]
+
+    def test_generate_with_zero_workers(self):
+        save_keywords(["词1"], False)
+
+        response = client.get("/api/cli/generate?workers=0")
+        assert response.status_code == 200
+        data = response.json()
+        assert "-w" not in data["command"]
+
 
 class TestIndexPage:
     """测试前端页面"""

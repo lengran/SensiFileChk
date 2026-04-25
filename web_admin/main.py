@@ -106,25 +106,11 @@ async def get_ocr_config():
 
 
 @app.get("/api/cli/generate")
-async def generate_cli_command():
-    config = load_keywords()
-    keywords = config["keywords"]
-
-    if keywords:
-        if len(keywords) <= 3:
-            keyword_args = " ".join(f'"{kw}"' for kw in keywords)
-            command = f"sensi-check check /path/to/scan -o report.html -n"
-            setup_cmd = f"sensi-check add {keyword_args}"
-        else:
-            command = f"sensi-check check /path/to/scan -o report.html -n"
-            setup_cmd = f"# 已通过配置文件设置 {len(keywords)} 个关键词"
-    else:
-        command = "sensi-check check /path/to/scan -o report.html -n"
-        setup_cmd = "# 请先添加关键词"
-
-    return CliCommandResponse(
-        command=f"# 设置关键词\n{setup_cmd}\n\n# 执行扫描\n{command}"
-    )
+async def generate_cli_command(workers: int = 0):
+    command = "sensi-check check /path/to/scan -o report.html"
+    if workers > 0:
+        command += f" -w {workers}"
+    return CliCommandResponse(command=command)
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8000):
