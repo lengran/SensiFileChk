@@ -10,3 +10,5 @@ build/
 *.html
 !.gitkeep
 config/keywords.json
+.coverage
+.pytest_cache/
