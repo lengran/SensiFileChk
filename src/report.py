@@ -51,19 +51,43 @@ def _build_tree(results: list[FileResult], scan_dir: str) -> dict:
     return tree
 
 
-def _render_tree(node: dict, level: int) -> str:
+def _has_matches(node) -> bool:
+    if isinstance(node, FileResult):
+        return bool(node.matches)
+    if isinstance(node, dict):
+        return any(_has_matches(v) for v in node.values())
+    return False
+
+
+def _render_tree(node: dict, level: int, breadcrumb: list = None) -> str:
+    if breadcrumb is None:
+        breadcrumb = []
     html_parts = []
     dirs = sorted(k for k, v in node.items() if isinstance(v, dict))
     files = sorted(k for k, v in node.items() if isinstance(v, FileResult))
 
     for d in dirs:
-        child_html = _render_tree(node[d], level + 1)
-        html_parts.append(
-            f'<div class="dir" style="margin-left:{level * 20}px">'
-            f'<div class="dir-header" onclick="toggle(this)">'
-            f'<span class="arrow">&#9654;</span> {escape(d)}/</div>'
-            f'<div class="dir-content" style="display:none">{child_html}</div></div>'
-        )
+        child_breadcrumb = breadcrumb + [d]
+        has = _has_matches(node[d])
+        display = "block" if has else "none"
+        arrow_cls = "open" if has else ""
+        if level >= 3:
+            child_html = _render_tree(node[d], level, child_breadcrumb)
+            crumb = " › ".join(escape(p) for p in child_breadcrumb)
+            html_parts.append(
+                f'<div class="dir" style="margin-left:{level * 20}px">'
+                f'<div class="dir-header" onclick="toggle(this)">'
+                f'<span class="arrow {arrow_cls}">&#9654;</span> {crumb}/</div>'
+                f'<div class="dir-content" style="display:{display}">{child_html}</div></div>'
+            )
+        else:
+            child_html = _render_tree(node[d], level + 1, child_breadcrumb)
+            html_parts.append(
+                f'<div class="dir" style="margin-left:{level * 20}px">'
+                f'<div class="dir-header" onclick="toggle(this)">'
+                f'<span class="arrow {arrow_cls}">&#9654;</span> {escape(d)}/</div>'
+                f'<div class="dir-content" style="display:{display}">{child_html}</div></div>'
+            )
 
     for fname in files:
         fr = node[fname]
@@ -119,7 +143,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <title>保密检查报告</title>
 <style>
 body {{ font-family: "Microsoft YaHei", "PingFang SC", sans-serif; margin: 20px; background: #f5f5f5; }}
-.container {{ max-width: 960px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
+.container {{ max-width: 100%; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
 h1 {{ color: #333; border-bottom: 2px solid #e74c3c; padding-bottom: 10px; }}
 .summary {{ background: #f9f9f9; padding: 15px; border-radius: 4px; margin: 15px 0; }}
 .summary span {{ margin-right: 20px; color: #555; }}

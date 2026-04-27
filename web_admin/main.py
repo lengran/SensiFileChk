@@ -106,8 +106,19 @@ async def get_ocr_config():
 
 
 @app.get("/api/cli/generate")
-async def generate_cli_command(workers: int = 0):
-    command = "sensi-check check /path/to/scan -o report.html"
+async def generate_cli_command(
+    workers: int = 0,
+    scan_path: str = "",
+    output_path: str = "",
+):
+    def _quote_if_needed(p: str) -> str:
+        if " " in p and not (p.startswith('"') and p.endswith('"')):
+            return f'"{p}"'
+        return p
+
+    scan = _quote_if_needed(scan_path) if scan_path else "/path/to/scan"
+    output = _quote_if_needed(output_path) if output_path else "report.html"
+    command = f"sensi-check check {scan} -o {output}"
     if workers > 0:
         command += f" -w {workers}"
     return CliCommandResponse(command=command)

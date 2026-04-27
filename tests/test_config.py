@@ -130,3 +130,36 @@ class TestConcurrentWrite:
         result = load_keywords()
         for word in words:
             assert word in result["keywords"], f"并发写入丢失: {word}"
+
+
+class TestMissingConfigFile:
+    def test_load_returns_default_when_missing(self, isolated_test_config, monkeypatch):
+        import src.config as cfg
+        if os.path.exists(isolated_test_config):
+            os.unlink(isolated_test_config)
+        monkeypatch.setattr(cfg, "CONFIG_PATH", os.path.join(os.path.dirname(isolated_test_config), "nonexistent.json"))
+        result = load_keywords()
+        assert result == {"keywords": [], "ocr_enabled": False}
+
+    def test_save_creates_file(self, isolated_test_config, monkeypatch):
+        import src.config as cfg
+        new_path = os.path.join(os.path.dirname(isolated_test_config), "new_keywords.json")
+        monkeypatch.setattr(cfg, "CONFIG_PATH", new_path)
+        if os.path.exists(new_path):
+            os.unlink(new_path)
+        save_keywords(["新词"], True)
+        assert os.path.exists(new_path)
+        with open(new_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert "新词" in data["keywords"]
+        assert data["ocr_enabled"] is True
+
+
+class TestOcrToggle:
+    def test_ocr_save_and_load(self, isolated_test_config):
+        save_keywords(["词1"], True)
+        result = load_keywords()
+        assert result["ocr_enabled"] is True
+        save_keywords(["词1"], False)
+        result = load_keywords()
+        assert result["ocr_enabled"] is False

@@ -2,7 +2,7 @@ import os
 import pytest
 
 from src.checker import scan_directory, FileResult, Match
-from src.report import generate_report
+from src.report import generate_report, _has_matches, _highlight_keyword
 
 
 @pytest.fixture
@@ -107,3 +107,40 @@ class TestGenerateReport:
         with open(output, encoding="utf-8") as fobj:
             html = fobj.read()
         assert "行 2" in html or "line-num" in html
+
+    def test_deep_directory_breadcrumb(self, tmp_path):
+        deep = tmp_path
+        for d in ["a", "b", "c", "d"]:
+            deep = deep / d
+            deep.mkdir()
+        (deep / "secret.txt").write_text("深层机密", encoding="utf-8")
+        result = scan_directory(str(tmp_path), ["深层机密"])
+        output = str(tmp_path / "report.html")
+        generate_report(result, output, str(tmp_path), ["深层机密"])
+        with open(output, encoding="utf-8") as fobj:
+            html = fobj.read()
+        assert "›" in html
+
+    def test_has_matches_recursive(self):
+        fr_match = FileResult(file_path="t.txt", matches=[Match(keyword="k", start=0, end=1, context="k", line_number=1)])
+        fr_no_match = FileResult(file_path="t2.txt")
+        assert _has_matches(fr_match) is True
+        assert _has_matches(fr_no_match) is False
+        assert _has_matches({"a": {"b": fr_match}}) is True
+        assert _has_matches({"a": {"b": fr_no_match}}) is False
+        assert _has_matches({}) is False
+
+    def test_empty_keyword_highlight(self):
+        result = _highlight_keyword("some text", "")
+        assert result == "some text"
+
+    def test_matched_directory_auto_expanded(self, tmp_path):
+        sub = tmp_path / "subdir"
+        sub.mkdir()
+        (sub / "a.txt").write_text("机密内容", encoding="utf-8")
+        result = scan_directory(str(tmp_path), ["机密内容"])
+        output = str(tmp_path / "report.html")
+        generate_report(result, output, str(tmp_path), ["机密内容"])
+        with open(output, encoding="utf-8") as fobj:
+            html = fobj.read()
+        assert "display:block" in html

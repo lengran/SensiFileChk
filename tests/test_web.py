@@ -169,6 +169,36 @@ class TestCliGenerate:
         data = response.json()
         assert "-w" not in data["command"]
 
+    def test_generate_with_scan_path(self):
+        save_keywords(["词1"], False)
+        response = client.get("/api/cli/generate?scan_path=/home/user/docs")
+        assert response.status_code == 200
+        data = response.json()
+        assert "/home/user/docs" in data["command"]
+
+    def test_generate_with_output_path(self):
+        save_keywords(["词1"], False)
+        response = client.get("/api/cli/generate?output_path=/tmp/report.html")
+        assert response.status_code == 200
+        data = response.json()
+        assert "/tmp/report.html" in data["command"]
+
+    def test_generate_with_space_in_path(self):
+        save_keywords(["词1"], False)
+        response = client.get("/api/cli/generate?scan_path=/home/my docs/files")
+        assert response.status_code == 200
+        data = response.json()
+        assert '"/home/my docs/files"' in data["command"]
+
+    def test_generate_with_all_params(self):
+        save_keywords(["词1"], False)
+        response = client.get("/api/cli/generate?scan_path=/data&output_path=/out.html&workers=4")
+        assert response.status_code == 200
+        data = response.json()
+        assert "/data" in data["command"]
+        assert "/out.html" in data["command"]
+        assert "-w 4" in data["command"]
+
 
 class TestIndexPage:
     """测试前端页面"""

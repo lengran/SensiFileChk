@@ -230,11 +230,145 @@ class TestParallelScan:
         result = scan_directory(str(tmp_path), ["国家机密"], num_workers=2)
         assert len(result["results"]) == 10
 
+
+class TestVerboseMode:
+    def test_verbose_progress(self, tmp_path, capsys):
+        for i in range(5):
+            (tmp_path / f"f{i}.txt").write_text(f"文件{i}国家机密", encoding="utf-8")
+        scan_directory(str(tmp_path), ["国家机密"], verbose=True)
+        out = capsys.readouterr().out
+        assert "进度" in out
+
+    def test_verbose_hits(self, tmp_path, capsys):
+        for i in range(5):
+            (tmp_path / f"f{i}.txt").write_text(f"文件{i}国家机密", encoding="utf-8")
+        scan_directory(str(tmp_path), ["国家机密"], verbose=True)
+        out = capsys.readouterr().out
+        assert out.count("命中") == 5
+
+    def test_verbose_failures(self, tmp_path, capsys):
+        (tmp_path / "f1.txt").write_text("正常", encoding="utf-8")
+        corrupt = tmp_path / "f2.docx"
+        corrupt.write_bytes(b"not a docx")
+        scan_directory(str(tmp_path), ["正常"], verbose=True)
+        out = capsys.readouterr().out
+        assert "失败" in out
+
+    def test_verbose_multi_worker(self, tmp_path, capsys):
+        for i in range(5):
+            (tmp_path / f"f{i}.txt").write_text(f"文件{i}国家机密", encoding="utf-8")
+        scan_directory(str(tmp_path), ["国家机密"], num_workers=2, verbose=True)
+        out = capsys.readouterr().out
+        assert "命中" in out
+
+
+class TestScanSingleFileAdvanced:
+    def test_scan_corrupted_pdf(self, tmp_path):
+        f = tmp_path / "bad.pdf"
+        f.write_bytes(b"not a pdf")
+        result = scan_single_file(str(f), ["test"], 50)
+        assert result.error is not None
+
+    def test_scan_parser_exception(self, tmp_path, monkeypatch):
+        f = tmp_path / "test.txt"
+        f.write_text("内容", encoding="utf-8")
+        from unittest.mock import MagicMock
+        monkeypatch.setattr("src.checker.TxtParser", lambda: MagicMock(parse=MagicMock(side_effect=Exception("boom"))))
+        result = scan_single_file(str(f), ["内容"], 50)
+        assert "解析失败" in result.error
+
+    def test_scan_check_archives_false(self, tmp_path):
+        import zipfile
+        inner = tmp_path / "inner.txt"
+        inner.write_text("机密", encoding="utf-8")
+        zip_path = str(tmp_path / "test.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.write(str(inner), "inner.txt")
+        result = scan_single_file(zip_path, ["机密"], 50, check_archives=False)
+        assert result.error is not None
+
+    def test_scan_zip_with_match(self, tmp_path):
+        import zipfile
+        inner = tmp_path / "inner.txt"
+        inner.write_text("国家机密在压缩包内", encoding="utf-8")
+        zip_path = str(tmp_path / "test.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.write(str(inner), "inner.txt")
+        result = scan_single_file(zip_path, ["国家机密"], 50)
+        assert len(result.matches) >= 1
+
+
+class TestMultiWorkerEdgeCases:
     def test_multi_worker_results_match(self, tmp_path):
         for i in range(10):
             (tmp_path / f"f{i}.txt").write_text(f"文件{i}国家机密", encoding="utf-8")
         r1 = scan_directory(str(tmp_path), ["国家机密"], num_workers=1)
         r2 = scan_directory(str(tmp_path), ["国家机密"], num_workers=2)
-        paths1 = sorted(r.file_path for r in r1["results"])
-        paths2 = sorted(r.file_path for r in r2["results"])
+        paths1 = sorted(fr.file_path for fr in r1["results"])
+        paths2 = sorted(fr.file_path for fr in r2["results"])
         assert paths1 == paths2
+
+    def test_multi_worker_failure(self, tmp_path):
+        corrupt = tmp_path / "bad.docx"
+        corrupt.write_bytes(b"not a docx")
+        result = scan_directory(str(tmp_path), ["test"], num_workers=2)
+        assert len(result["failures"]) == 1
+
+
+class TestDiscoverFilesAdvanced:
+    def test_custom_extensions(self, tmp_path):
+        (tmp_path / "a.txt").write_text("test")
+        (tmp_path / "b.pdf").write_bytes(b"%PDF")
+        files = discover_files(str(tmp_path), extensions={".txt"})
+        assert len(files) == 1
+        assert files[0].endswith("a.txt")
+
+
+class TestParserByExt:
+    def test_pdf_parser(self):
+        from src.checker import _parser_by_ext
+        parser = _parser_by_ext(".pdf", ocr_enabled=True)
+        assert parser is not None
+        assert parser.ocr_enabled is True
+
+    def test_office_parser(self):
+        from src.checker import _parser_by_ext
+        parser = _parser_by_ext(".docx")
+        assert parser is not None
+
+    def test_txt_parser(self):
+        from src.checker import _parser_by_ext
+        parser = _parser_by_ext(".txt")
+        assert parser is not None
+
+    def test_unknown_ext(self):
+        from src.checker import _parser_by_ext
+        parser = _parser_by_ext(".xyz")
+        assert parser is None
+
+
+class TestWorkerTask:
+    def test_worker_task_delegates(self, tmp_path):
+        from src.checker import _worker_task
+        f = tmp_path / "test.txt"
+        f.write_text("国家机密", encoding="utf-8")
+        result = _worker_task((str(f), ["国家机密"], 50, False, True))
+        assert len(result.matches) == 1
+
+
+class TestMultiWorkerVerbose:
+    def test_verbose_multi_worker_failure(self, tmp_path, capsys):
+        corrupt = tmp_path / "bad.docx"
+        corrupt.write_bytes(b"not a docx")
+        (tmp_path / "good.txt").write_text("正常文本", encoding="utf-8")
+        scan_directory(str(tmp_path), ["正常文本"], verbose=True, num_workers=2)
+        out = capsys.readouterr().out
+        assert "失败" in out
+
+    def test_worker_exception_in_pool(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock, patch
+        (tmp_path / "f.txt").write_text("国家机密", encoding="utf-8")
+        with patch("src.checker._worker_task", side_effect=RuntimeError("worker crashed")):
+            result = scan_directory(str(tmp_path), ["国家机密"], num_workers=2)
+            assert len(result["failures"]) == 1
+            assert "worker 异常" in result["failures"][0].error
