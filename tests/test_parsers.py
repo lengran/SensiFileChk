@@ -1152,6 +1152,102 @@ class TestArchiveFinalGaps:
         assert "嵌套解压失败" in result
 
 
+class TestArchiveCoverageGaps:
+    def test_gz_tar_suffix_yields_decompressed(self, tmp_path):
+        import gzip
+        subdir = tmp_path / "sub"
+        subdir.mkdir()
+        gz_path = str(subdir / ".tar.gz")
+        data = "decompressed content".encode("utf-8")
+        with gzip.open(gz_path, "wb") as f:
+            f.write(data)
+        parser = ArchiveParser(inner_parser_factory=lambda e: TxtParser() if e == ".txt" else None)
+        result = parser._parse_gz(gz_path)
+        assert "decompressed content" in result
+
+    def test_tar_member_size_exceeds_max(self, tmp_path, monkeypatch):
+        import tarfile
+        inner = _make_txt(tmp_path, "big.txt", "x" * 200)
+        tar_path = str(tmp_path / "big.tar")
+        with tarfile.open(tar_path, "w") as tf:
+            tf.add(inner, arcname="big.txt")
+        monkeypatch.setattr("src.parsers.archive.MAX_SIZE", 20)
+        parser = ArchiveParser(inner_parser_factory=lambda e: TxtParser() if e == ".txt" else None)
+        with pytest.raises(ParserError, match="压缩包内文件过大"):
+            parser.parse(tar_path)
+
+    def test_rar_dir_entry_and_total_size(self, tmp_path):
+        try:
+            import rarfile
+        except ImportError:
+            pytest.skip("rarfile not installed")
+        from unittest.mock import patch, MagicMock
+        rar_path = str(tmp_path / "test.rar")
+        with open(rar_path, "wb") as f:
+            f.write(b"dummy")
+        dir_info = MagicMock()
+        dir_info.is_dir.return_value = True
+        dir_info.filename = "subdir/"
+        file_info = MagicMock()
+        file_info.is_dir.return_value = False
+        file_info.file_size = 30
+        file_info.filename = "inner.txt"
+        mock_rf = MagicMock()
+        mock_rf.infolist.return_value = [dir_info, file_info]
+        mock_rf.extract = MagicMock(side_effect=Exception("extract fail"))
+        with patch.object(rarfile, "RarFile", return_value=mock_rf):
+            parser = ArchiveParser()
+            result = parser._extract_rar_archive(mock_rf, rar_path)
+            assert "解压失败" in result
+
+    def test_rar_total_size_exceeds_limit(self, tmp_path, monkeypatch):
+        try:
+            import rarfile
+        except ImportError:
+            pytest.skip("rarfile not installed")
+        from unittest.mock import patch, MagicMock
+        rar_path = str(tmp_path / "test.rar")
+        with open(rar_path, "wb") as f:
+            f.write(b"dummy")
+        file_info1 = MagicMock()
+        file_info1.is_dir.return_value = False
+        file_info1.file_size = 100
+        file_info1.filename = "a.txt"
+        file_info2 = MagicMock()
+        file_info2.is_dir.return_value = False
+        file_info2.file_size = 100
+        file_info2.filename = "b.txt"
+        mock_rf = MagicMock()
+        mock_rf.infolist.return_value = [file_info1, file_info2]
+        monkeypatch.setattr("src.parsers.archive.MAX_TOTAL_SIZE", 50)
+        with patch.object(rarfile, "RarFile", return_value=mock_rf):
+            parser = ArchiveParser()
+            with pytest.raises(ParserError, match="压缩包总大小超限"):
+                parser._extract_rar_archive(mock_rf, rar_path)
+
+    def test_rar_per_file_parser_error(self, tmp_path):
+        try:
+            import rarfile
+        except ImportError:
+            pytest.skip("rarfile not installed")
+        from unittest.mock import patch, MagicMock
+        rar_path = str(tmp_path / "test.rar")
+        with open(rar_path, "wb") as f:
+            f.write(b"dummy")
+        file_info = MagicMock()
+        file_info.is_dir.return_value = False
+        file_info.file_size = 10
+        file_info.filename = "inner.txt"
+        mock_rf = MagicMock()
+        mock_rf.infolist.return_value = [file_info]
+        mock_rf.extract = MagicMock(side_effect=ParserError("rar extract parser error"))
+
+        with patch.object(rarfile, "RarFile", return_value=mock_rf):
+            parser = ArchiveParser()
+            result = parser._extract_rar_archive(mock_rf, rar_path)
+            assert "解析失败" in result
+
+
 class TestOfficeFinalGaps:
     def test_pywin32_unsupported_legacy_ext(self, tmp_path):
         from unittest.mock import patch, MagicMock
