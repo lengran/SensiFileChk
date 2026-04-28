@@ -2,7 +2,9 @@
 敏感词 Web 管理端 - FastAPI 应用
 提供关键词管理和 OCR 配置的管理界面
 """
+import json
 import os
+import platform
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -15,6 +17,7 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templat
 app = FastAPI(title="敏感词管理端", description="Web 界面管理敏感词库")
 
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
+templates.env.filters['tojson'] = lambda value: json.dumps(value, ensure_ascii=False)
 
 
 class KeywordRequest(BaseModel):
@@ -37,8 +40,15 @@ class CliCommandResponse(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def index_page(request: Request):
+    config = load_keywords()
+    os_type = "windows" if platform.system() == "Windows" else "linux"
     template = templates.get_template("index.html")
-    content = template.render(request=request)
+    content = template.render(
+        request=request,
+        initial_keywords=config["keywords"],
+        initial_ocr_enabled=config["ocr_enabled"],
+        os_type=os_type,
+    )
     return HTMLResponse(content=content)
 
 
@@ -107,6 +117,7 @@ async def get_ocr_config():
 
 @app.get("/api/cli/generate")
 async def generate_cli_command(
+    auto_workers: bool = True,
     workers: int = 0,
     scan_path: str = "",
     output_path: str = "",
@@ -119,7 +130,7 @@ async def generate_cli_command(
     scan = _quote_if_needed(scan_path) if scan_path else "/path/to/scan"
     output = _quote_if_needed(output_path) if output_path else "report.html"
     command = f"sensi-check check {scan} -o {output}"
-    if workers > 0:
+    if not auto_workers and workers > 0:
         command += f" -w {workers}"
     return CliCommandResponse(command=command)
 

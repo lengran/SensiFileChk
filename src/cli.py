@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 import time
 
@@ -14,7 +15,7 @@ def main():
     check_parser = subparsers.add_parser("check", help="扫描目录中的敏感词")
     check_parser.add_argument("dir", help="要扫描的目录路径")
     check_parser.add_argument("-o", "--output", required=True, help="HTML 报告输出路径")
-    check_parser.add_argument("-w", "--workers", type=int, default=1, help="并行 worker 数量")
+    check_parser.add_argument("-w", "--workers", type=int, default=None, help="并行 worker 数量（默认: CPU 核心数）")
     check_parser.add_argument("--context", type=int, default=50, help="上下文字符数")
     check_parser.add_argument("-n", "--no-archives", action="store_true", help="不检查压缩包内容")
     check_parser.add_argument("--verbose", action="store_true", help="显示详细扫描过程")
@@ -66,11 +67,12 @@ def _cmd_check(args):
         sys.exit(1)
 
     start = time.time()
+    num_workers = args.workers if args.workers is not None else os.cpu_count() or 1
     result = scan_directory(
         args.dir,
         keywords,
         context_chars=args.context,
-        num_workers=args.workers,
+        num_workers=num_workers,
         ocr_enabled=config["ocr_enabled"],
         check_archives=not args.no_archives,
         verbose=args.verbose,

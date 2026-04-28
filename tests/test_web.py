@@ -148,12 +148,12 @@ class TestCliGenerate:
     def test_generate_with_workers(self):
         save_keywords(["词1"], False)
 
-        response = client.get("/api/cli/generate?workers=4")
+        response = client.get("/api/cli/generate?auto_workers=false&workers=4")
         assert response.status_code == 200
         data = response.json()
         assert "-w 4" in data["command"]
 
-    def test_generate_without_workers(self):
+    def test_generate_auto_workers_default(self):
         save_keywords(["词1"], False)
 
         response = client.get("/api/cli/generate")
@@ -161,10 +161,18 @@ class TestCliGenerate:
         data = response.json()
         assert "-w" not in data["command"]
 
-    def test_generate_with_zero_workers(self):
+    def test_generate_auto_workers_true(self):
         save_keywords(["词1"], False)
 
-        response = client.get("/api/cli/generate?workers=0")
+        response = client.get("/api/cli/generate?auto_workers=true&workers=4")
+        assert response.status_code == 200
+        data = response.json()
+        assert "-w" not in data["command"]
+
+    def test_generate_auto_workers_false_zero(self):
+        save_keywords(["词1"], False)
+
+        response = client.get("/api/cli/generate?auto_workers=false&workers=0")
         assert response.status_code == 200
         data = response.json()
         assert "-w" not in data["command"]
@@ -192,7 +200,7 @@ class TestCliGenerate:
 
     def test_generate_with_all_params(self):
         save_keywords(["词1"], False)
-        response = client.get("/api/cli/generate?scan_path=/data&output_path=/out.html&workers=4")
+        response = client.get("/api/cli/generate?auto_workers=false&scan_path=/data&output_path=/out.html&workers=4")
         assert response.status_code == 200
         data = response.json()
         assert "/data" in data["command"]
@@ -212,7 +220,15 @@ class TestIndexPage:
         response = client.get("/")
         content = response.text
         assert "敏感词" in content
-        assert "管理端" in content or "管理" in content
+        assert "命令生成器" in content
+
+    def test_index_initial_keywords_rendered(self):
+        save_keywords(["初始词A", "初始词B"], False)
+
+        response = client.get("/")
+        content = response.text
+        assert "初始词A" in content
+        assert "初始词B" in content
 
 
 class TestApiConsistency:
