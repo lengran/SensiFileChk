@@ -8,6 +8,7 @@ import platform
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 from pydantic import BaseModel
 
 from src.config import load_keywords, save_keywords, add_keyword, remove_keyword
@@ -17,7 +18,7 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templat
 app = FastAPI(title="敏感词管理端", description="Web 界面管理敏感词库")
 
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
-templates.env.filters['tojson'] = lambda value: json.dumps(value, ensure_ascii=False)
+templates.env.filters['tojson'] = lambda value: Markup(json.dumps(value, ensure_ascii=False))
 
 
 class KeywordRequest(BaseModel):
