@@ -103,20 +103,25 @@ def add_keywords(words: list[str]) -> None:
 
 
 def add_keyword(word: str) -> None:
-    def _modify(config):
-        keywords = config["keywords"]
-        if word and word not in keywords:
-            keywords.append(word)
-        return config
-    _atomic_read_write(None, _modify)
+    with _config_lock:
+        def _modify(config):
+            keywords = config["keywords"]
+            if word and word not in keywords:
+                keywords.append(word)
+            return config
+        _atomic_read_write(None, _modify)
 
 
-def remove_keyword(word: str) -> None:
-    def _modify(config):
-        keywords = config["keywords"]
-        if word in keywords:
-            keywords.remove(word)
-        return config
-    
-    result = _atomic_read_write(None, _modify)
-    return word not in result.get("keywords", [word])
+def remove_keyword(word: str) -> bool:
+    with _config_lock:
+        was_present = False
+
+        def _modify(config):
+            nonlocal was_present
+            keywords = config["keywords"]
+            if word in keywords:
+                keywords.remove(word)
+                was_present = True
+            return config
+        _atomic_read_write(None, _modify)
+    return was_present
