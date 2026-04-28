@@ -7,7 +7,7 @@ from html import escape
 from .checker import FileResult
 
 
-def generate_report(scan_result: dict, output_path: str, scan_dir: str, keywords: list[str]) -> None:
+def generate_report(scan_result: dict, output_path: str, scan_dir: str, keywords: list[str], elapsed: float = 0.0) -> None:
     results: list[FileResult] = scan_result.get("results", [])
     failures: list[FileResult] = scan_result.get("failures", [])
     out_dir = os.path.dirname(output_path)
@@ -17,6 +17,7 @@ def generate_report(scan_result: dict, output_path: str, scan_dir: str, keywords
     total_matches = sum(len(r.matches) for r in results)
     total_files = len(results) + len(failures)
     scan_time = time.strftime("%Y-%m-%d %H:%M:%S")
+    elapsed_str = f"{elapsed:.2f}s"
 
     tree = _build_tree(results, scan_dir)
     tree_html = _render_tree(tree, 0)
@@ -24,6 +25,7 @@ def generate_report(scan_result: dict, output_path: str, scan_dir: str, keywords
 
     html = _HTML_TEMPLATE.format(
         scan_time=scan_time,
+        elapsed_str=elapsed_str,
         scan_dir=escape(scan_dir),
         keyword_count=len(keywords),
         total_files=total_files,
@@ -66,6 +68,8 @@ def _render_tree(node: dict, level: int, breadcrumb: list = None) -> str:
     dirs = sorted(k for k, v in node.items() if isinstance(v, dict))
     files = sorted(k for k, v in node.items() if isinstance(v, FileResult))
 
+    indent = min(level * 16, 64)
+
     for d in dirs:
         child_breadcrumb = breadcrumb + [d]
         has = _has_matches(node[d])
@@ -75,7 +79,7 @@ def _render_tree(node: dict, level: int, breadcrumb: list = None) -> str:
             child_html = _render_tree(node[d], level, child_breadcrumb)
             crumb = " › ".join(escape(p) for p in child_breadcrumb)
             html_parts.append(
-                f'<div class="dir" style="margin-left:{level * 20}px">'
+                f'<div class="dir" style="padding-left:{indent}px">'
                 f'<div class="dir-header" onclick="toggle(this)">'
                 f'<span class="arrow {arrow_cls}">&#9654;</span> {crumb}/</div>'
                 f'<div class="dir-content" style="display:{display}">{child_html}</div></div>'
@@ -83,7 +87,7 @@ def _render_tree(node: dict, level: int, breadcrumb: list = None) -> str:
         else:
             child_html = _render_tree(node[d], level + 1, child_breadcrumb)
             html_parts.append(
-                f'<div class="dir" style="margin-left:{level * 20}px">'
+                f'<div class="dir" style="padding-left:{indent}px">'
                 f'<div class="dir-header" onclick="toggle(this)">'
                 f'<span class="arrow {arrow_cls}">&#9654;</span> {escape(d)}/</div>'
                 f'<div class="dir-content" style="display:{display}">{child_html}</div></div>'
@@ -102,7 +106,7 @@ def _render_tree(node: dict, level: int, breadcrumb: list = None) -> str:
                 f'<span class="context">…{ctx}…</span></div>'
             )
         html_parts.append(
-            f'<div class="file" style="margin-left:{level * 20}px">'
+            f'<div class="file" style="padding-left:{indent}px">'
             f'<div class="file-name">&#128196; {escape(fname)}</div>'
             f'<div class="matches">{match_html}</div></div>'
         )
@@ -140,32 +144,35 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>保密检查报告</title>
 <style>
-body {{ font-family: "Microsoft YaHei", "PingFang SC", sans-serif; margin: 20px; background: #f5f5f5; }}
-.container {{ max-width: 100%; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
-h1 {{ color: #333; border-bottom: 2px solid #e74c3c; padding-bottom: 10px; }}
-.summary {{ background: #f9f9f9; padding: 15px; border-radius: 4px; margin: 15px 0; }}
-.summary span {{ margin-right: 20px; color: #555; }}
-.summary .num {{ color: #e74c3c; font-weight: bold; }}
-.dir-header {{ cursor: pointer; padding: 6px 10px; background: #eef; border-radius: 4px; margin: 4px 0; font-weight: bold; }}
-.dir-header:hover {{ background: #dde; }}
-.dir-content {{ padding-left: 10px; }}
-.arrow {{ display: inline-block; width: 12px; transition: transform 0.2s; }}
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif; background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%); color: #e1e1e6; margin: 20px; }}
+.container {{ max-width: 100%; margin: 0 auto; background: rgba(30, 30, 46, 0.85); padding: 30px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3); backdrop-filter: blur(10px); }}
+h1 {{ background: linear-gradient(90deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-bottom: 10px; }}
+.summary {{ background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); padding: 15px; border-radius: 8px; margin: 15px 0; }}
+.summary span {{ margin-right: 20px; color: #8b8ba0; }}
+.summary .num {{ color: #60a5fa; font-weight: bold; }}
+.dir-header {{ cursor: pointer; padding: 8px 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; margin: 4px 0; font-weight: bold; color: #c4c4d8; transition: background 0.2s; }}
+.dir-header:hover {{ background: rgba(255, 255, 255, 0.06); }}
+.dir-content {{ padding-left: 16px; }}
+.arrow {{ display: inline-block; width: 12px; transition: transform 0.2s; color: #60a5fa; }}
 .arrow.open {{ transform: rotate(90deg); }}
 .file {{ margin: 8px 0; }}
-.file-name {{ font-weight: bold; color: #2c3e50; padding: 4px 0; }}
-.match {{ padding: 4px 10px; margin: 2px 0; background: #fef9e7; border-left: 3px solid #f39c12; }}
-.keyword {{ color: #e74c3c; font-weight: bold; margin-right: 8px; }}
-.line-num {{ color: #888; font-size: 0.85em; margin-right: 8px; }}
-.context {{ color: #555; }}
-mark.highlight {{ background: #e74c3c; color: #fff; padding: 1px 3px; border-radius: 2px; }}
-.failure-header {{ background: #fee; }}
-.failure-header:hover {{ background: #fdd; }}
-.failure-item {{ padding: 6px 10px; margin: 2px 0; background: #fff5f5; border-left: 3px solid #e74c3c; }}
-.failure-path {{ font-weight: bold; color: #c0392b; }}
-.failure-reason {{ color: #888; }}
-.no-results {{ text-align: center; color: #999; font-size: 18px; padding: 40px; }}
+.file-name {{ font-weight: bold; color: #e1e1e6; padding: 4px 0; overflow-wrap: break-word; }}
+.match {{ padding: 6px 12px; margin: 4px 0; background: rgba(255, 255, 255, 0.03); border-left: 3px solid #f39c12; border-radius: 0 4px 4px 0; overflow-x: auto; }}
+.keyword {{ color: #f87171; font-weight: bold; margin-right: 8px; }}
+.line-num {{ color: #8b8ba0; font-size: 0.85em; margin-right: 8px; }}
+.context {{ color: #c4c4d8; overflow-wrap: break-word; }}
+mark.highlight {{ background: rgba(248, 113, 113, 0.25); color: #f87171; padding: 1px 4px; border-radius: 3px; }}
+.failure-header {{ background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); }}
+.failure-header:hover {{ background: rgba(239, 68, 68, 0.2); }}
+.failure-item {{ padding: 6px 12px; margin: 4px 0; background: rgba(239, 68, 68, 0.05); border-left: 3px solid #f87171; border-radius: 0 4px 4px 0; }}
+.failure-path {{ font-weight: bold; color: #f87171; overflow-wrap: break-word; }}
+.failure-reason {{ color: #8b8ba0; }}
+.no-results {{ text-align: center; color: #5a5a72; font-size: 18px; padding: 40px; }}
+@media (max-width: 600px) {{ .container {{ padding: 16px; }} }}
 </style>
 </head>
 <body>
@@ -173,6 +180,7 @@ mark.highlight {{ background: #e74c3c; color: #fff; padding: 1px 3px; border-rad
 <h1>保密检查报告</h1>
 <div class="summary">
 <span>检查时间: {scan_time}</span>
+<span>检查用时: <span class="num">{elapsed_str}</span></span>
 <span>检查目录: {scan_dir}</span>
 <span>关键词数量: <span class="num">{keyword_count}</span></span>
 <span>扫描文件数: <span class="num">{total_files}</span></span>

@@ -79,7 +79,7 @@ def _cmd_check(args):
     )
     elapsed = time.time() - start
 
-    generate_report(result, args.output, args.dir, keywords)
+    generate_report(result, args.output, args.dir, keywords, elapsed)
 
     total_matches = sum(len(r.matches) for r in result["results"])
     total_files = len(result["results"]) + len(result["failures"])

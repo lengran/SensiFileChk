@@ -70,8 +70,8 @@ def _throttled_print(last_time: float, min_interval: float, msg: str) -> float:
     return last_time
 
 
-def _format_progress(discovered: int, checked: int, hits: int, match_count: int, fail_count: int) -> str:
-    return f"扫描中 | 已发现: {discovered} | 已检测: {checked} | 命中: {hits} | 匹配: {match_count} | 失败: {fail_count}"
+def _format_progress(discovered: int, checked: int, hits: int, match_count: int, fail_count: int, elapsed: float) -> str:
+    return f"扫描中 | 已发现: {discovered} | 已检测: {checked} | 命中: {hits} | 匹配: {match_count} | 失败: {fail_count} | 已用时: {elapsed:.1f}s"
 
 
 def discover_files(dir_path: str, extensions: Optional[set] = None) -> list[str]:
@@ -174,6 +174,7 @@ def scan_directory(
     match_count = 0
     fail_count = 0
     _last_time = 0.0
+    _start_time = time.time()
 
     if num_workers <= 1:
         for root, _dirs, dir_files in os.walk(dir_path):
@@ -196,10 +197,10 @@ def scan_directory(
                     match_count += len(fr.matches)
                     if verbose:
                         print(f"  [命中] {fpath}: {len(fr.matches)} 处匹配")
-                msg = _format_progress(discovered, checked, hits, match_count, fail_count)
+                msg = _format_progress(discovered, checked, hits, match_count, fail_count, time.time() - _start_time)
                 _last_time = _throttled_print(_last_time, 5.0, msg)
         if discovered > 0:
-            msg = _format_progress(discovered, checked, hits, match_count, fail_count)
+            msg = _format_progress(discovered, checked, hits, match_count, fail_count, time.time() - _start_time)
             sys.stdout.write(f"\r{msg}\n")
             sys.stdout.flush()
     else:
@@ -237,7 +238,7 @@ def scan_directory(
                             print(f"  [命中] {fr.file_path}: {len(fr.matches)} 处匹配")
 
                 if discovered > 0:
-                    msg = _format_progress(discovered, checked, hits, match_count, fail_count)
+                    msg = _format_progress(discovered, checked, hits, match_count, fail_count, time.time() - _start_time)
                     _last_time = _throttled_print(_last_time, 5.0, msg)
 
             for future in as_completed(pending):
@@ -257,11 +258,11 @@ def scan_directory(
                     match_count += len(fr.matches)
                     if verbose:
                         print(f"  [命中] {fr.file_path}: {len(fr.matches)} 处匹配")
-                msg = _format_progress(discovered, checked, hits, match_count, fail_count)
+                msg = _format_progress(discovered, checked, hits, match_count, fail_count, time.time() - _start_time)
                 _last_time = _throttled_print(_last_time, 5.0, msg)
 
             if discovered > 0:
-                msg = _format_progress(discovered, checked, hits, match_count, fail_count)
+                msg = _format_progress(discovered, checked, hits, match_count, fail_count, time.time() - _start_time)
                 sys.stdout.write(f"\r{msg}\n")
                 sys.stdout.flush()
 
