@@ -1,8 +1,10 @@
 import os
 import re
+import sys
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 from .parsers.archive import ArchiveParser
 from .parsers.base import ParserError
@@ -59,7 +61,23 @@ def _parser_by_ext(ext: str, ocr_enabled: bool = False):
     return None
 
 
-def discover_files(dir_path: str, extensions: Optional[set] = None) -> list[str]:
+def _throttled_print(last_time: float, min_interval: float, msg: str) -> float:
+    now = time.time()
+    if now - last_time >= min_interval:
+        sys.stdout.write(f"\r{msg}")
+        sys.stdout.flush()
+        return now
+    return last_time
+
+
+def _format_scan_progress(total: int, checked: int, hits: int, match_count: int, fail_count: int) -> str:
+    pct = checked * 100 // total if total > 0 else 0
+    filled = checked * 10 // total if total > 0 else 0
+    bar = "█" * filled + "░" * (10 - filled)
+    return f"扫描中 [{bar}] {pct}% | 待检测: {total} | 已检测: {checked} | 命中: {hits} | 匹配: {match_count} | 失败: {fail_count}"
+
+
+def discover_files(dir_path: str, extensions: Optional[set] = None, progress_callback: Optional[Callable[[int], None]] = None) -> list[str]:
     ext_filter = extensions or SUPPORTED_EXTENSIONS
     result = []
     for root, _dirs, files in os.walk(dir_path):
@@ -68,6 +86,8 @@ def discover_files(dir_path: str, extensions: Optional[set] = None) -> list[str]
             _, ext = os.path.splitext(fname)
             if ext.lower() in ext_filter:
                 result.append(fpath)
+                if progress_callback is not None:
+                    progress_callback(len(result))
     return sorted(result)
 
 
@@ -151,24 +171,47 @@ def scan_directory(
     check_archives: bool = True,
     verbose: bool = False,
 ) -> dict:
-    files = discover_files(dir_path)
+    _last_disc_time = 0.0
+
+    def _disc_cb(count: int):
+        nonlocal _last_disc_time
+        _last_disc_time = _throttled_print(_last_disc_time, 5.0, f"发现文件中... 已发现: {count}")
+
+    files = discover_files(dir_path, progress_callback=_disc_cb)
+    total = len(files)
+    if total > 0:
+        sys.stdout.write(f"\r发现文件中... 已发现: {total}\n")
+        sys.stdout.flush()
+
     results = []
     failures = []
-    total = len(files)
+    checked = 0
+    hits = 0
+    match_count = 0
+    fail_count = 0
+    _last_scan_time = 0.0
 
     if num_workers <= 1:
         for idx, fpath in enumerate(files):
             fr = scan_single_file(fpath, keywords, context_chars, ocr_enabled, check_archives)
+            checked += 1
             if fr.error:
                 failures.append(fr)
+                fail_count += 1
                 if verbose:
                     print(f"  [失败] {fpath}: {fr.error}")
             elif fr.matches:
                 results.append(fr)
+                hits += 1
+                match_count += len(fr.matches)
                 if verbose:
                     print(f"  [命中] {fpath}: {len(fr.matches)} 处匹配")
-            if verbose and total > 0:
-                print(f"  [进度] {idx + 1}/{total}")
+            msg = _format_scan_progress(total, checked, hits, match_count, fail_count)
+            if idx == len(files) - 1:
+                sys.stdout.write(f"\r{msg}\n")
+                sys.stdout.flush()
+            else:
+                _last_scan_time = _throttled_print(_last_scan_time, 5.0, msg)
     else:
         tasks = [
             (fpath, keywords, context_chars, ocr_enabled, check_archives)
@@ -176,20 +219,32 @@ def scan_directory(
         ]
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = {executor.submit(_worker_task, t): t[0] for t in tasks}
+            done_count = 0
             for future in as_completed(futures):
                 fpath = futures[future]
                 try:
                     fr = future.result()
                 except Exception as e:
                     fr = FileResult(file_path=fpath, error=f"worker 异常: {e}")
+                checked += 1
+                done_count += 1
                 if fr.error:
                     failures.append(fr)
+                    fail_count += 1
                     if verbose:
                         print(f"  [失败] {fpath}: {fr.error}")
                 elif fr.matches:
                     results.append(fr)
+                    hits += 1
+                    match_count += len(fr.matches)
                     if verbose:
                         print(f"  [命中] {fpath}: {len(fr.matches)} 处匹配")
+                msg = _format_scan_progress(total, checked, hits, match_count, fail_count)
+                if done_count == len(futures):
+                    sys.stdout.write(f"\r{msg}\n")
+                    sys.stdout.flush()
+                else:
+                    _last_scan_time = _throttled_print(_last_scan_time, 5.0, msg)
 
     results.sort(key=lambda r: r.file_path)
     failures.sort(key=lambda r: r.file_path)

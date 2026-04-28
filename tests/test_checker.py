@@ -237,14 +237,14 @@ class TestVerboseMode:
             (tmp_path / f"f{i}.txt").write_text(f"文件{i}国家机密", encoding="utf-8")
         scan_directory(str(tmp_path), ["国家机密"], verbose=True)
         out = capsys.readouterr().out
-        assert "进度" in out
+        assert "扫描中" in out
 
     def test_verbose_hits(self, tmp_path, capsys):
         for i in range(5):
             (tmp_path / f"f{i}.txt").write_text(f"文件{i}国家机密", encoding="utf-8")
         scan_directory(str(tmp_path), ["国家机密"], verbose=True)
         out = capsys.readouterr().out
-        assert out.count("命中") == 5
+        assert out.count("[命中]") == 5
 
     def test_verbose_failures(self, tmp_path, capsys):
         (tmp_path / "f1.txt").write_text("正常", encoding="utf-8")
