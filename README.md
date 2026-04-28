@@ -19,11 +19,19 @@
 **Linux (Ubuntu/Debian):**
 ```bash
 sudo apt install antiword unrar tesseract-ocr
+# OCR 中文识别需额外安装中文语言包
+sudo apt install tesseract-ocr-chi-sim
+# 或手动下载到 tessdata 目录
+sudo cp chi_sim.traineddata /usr/share/tesseract-ocr/4.00/tessdata/
 ```
 
 **macOS:**
 ```bash
 brew install catdoc unrar tesseract
+# OCR 中文识别需额外安装中文语言包
+brew install tesseract-lang
+# 或手动下载到 tessdata 目录
+cp chi_sim.traineddata $(brew --prefix)/share/tessdata/
 ```
 
 ### Python 环境

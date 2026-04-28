@@ -71,34 +71,52 @@ def save_keywords(keywords: list, ocr_enabled: bool) -> None:
             _unlock_file(f)
 
 
+def _atomic_read_write(read_data, modify_fn):
+    _ensure_config_dir()
+    if not os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(dict(_DEFAULT_CONFIG), f, ensure_ascii=False, indent=2)
+    with open(CONFIG_PATH, "r+", encoding="utf-8") as f:
+        _lock_file_exclusive(f)
+        try:
+            raw = json.load(f)
+            if not isinstance(raw, dict) or "keywords" not in raw or "ocr_enabled" not in raw:
+                raw = dict(_DEFAULT_CONFIG)
+            config = modify_fn(raw)
+            f.seek(0)
+            f.truncate()
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        finally:
+            _unlock_file(f)
+    return config
+
+
 def add_keywords(words: list[str]) -> None:
     with _config_lock:
-        config = load_keywords()
-        keywords = config["keywords"]
-        changed = False
-        for word in words:
-            if word and word not in keywords:
-                keywords.append(word)
-                changed = True
-        if changed:
-            save_keywords(keywords, config["ocr_enabled"])
+        def _modify(config):
+            keywords = config["keywords"]
+            for word in words:
+                if word and word not in keywords:
+                    keywords.append(word)
+            return config
+        _atomic_read_write(None, _modify)
 
 
 def add_keyword(word: str) -> None:
-    with _config_lock:
-        config = load_keywords()
+    def _modify(config):
         keywords = config["keywords"]
         if word and word not in keywords:
             keywords.append(word)
-            save_keywords(keywords, config["ocr_enabled"])
+        return config
+    _atomic_read_write(None, _modify)
 
 
 def remove_keyword(word: str) -> None:
-    with _config_lock:
-        config = load_keywords()
+    def _modify(config):
         keywords = config["keywords"]
         if word in keywords:
             keywords.remove(word)
-            save_keywords(keywords, config["ocr_enabled"])
-            return True
-    return False
+        return config
+    
+    result = _atomic_read_write(None, _modify)
+    return word not in result.get("keywords", [word])

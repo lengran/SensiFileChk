@@ -163,3 +163,66 @@ class TestOcrToggle:
         save_keywords(["词1"], False)
         result = load_keywords()
         assert result["ocr_enabled"] is False
+
+
+def _add_word_in_process(path, word):
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    import src.config as cfg
+    cfg.CONFIG_PATH = path
+    cfg.CONFIG_DIR = os.path.dirname(path)
+    cfg.add_keyword(word)
+
+
+def _write_config_in_process(path, idx):
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    import src.config as cfg
+    cfg.CONFIG_PATH = path
+    cfg.CONFIG_DIR = os.path.dirname(path)
+    cfg.save_keywords([f"corruption词{idx}"], idx % 2 == 0)
+
+
+class TestCrossProcessConfigSafety:
+    def test_multiprocess_concurrent_write(self, isolated_test_config):
+        import multiprocessing
+
+        config_path = isolated_test_config
+        ctx = multiprocessing.get_context("spawn")
+        words = [f"mp词{i}" for i in range(10)]
+        processes = [ctx.Process(target=_add_word_in_process, args=(config_path, w)) for w in words]
+
+        for p in processes:
+            p.start()
+        for p in processes:
+            p.join(timeout=30)
+
+        failed = [p.exitcode for p in processes if p.exitcode != 0]
+        assert not failed, f"进程异常退出: {failed}"
+
+        result = load_keywords()
+        for word in words:
+            assert word in result["keywords"], f"跨进程写入丢失: {word}"
+
+    def test_multiprocess_no_data_corruption(self, isolated_test_config):
+        import multiprocessing
+
+        config_path = isolated_test_config
+        ctx = multiprocessing.get_context("spawn")
+        processes = [ctx.Process(target=_write_config_in_process, args=(config_path, i)) for i in range(8)]
+
+        for p in processes:
+            p.start()
+        for p in processes:
+            p.join(timeout=30)
+
+        import json
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert isinstance(data, dict), "JSON 数据损坏"
+        assert "keywords" in data, "keywords 字段丢失"
+        assert "ocr_enabled" in data, "ocr_enabled 字段丢失"
+        assert isinstance(data["keywords"], list), "keywords 类型损坏"
+

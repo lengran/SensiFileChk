@@ -1278,3 +1278,49 @@ class TestOfficeFinalGaps:
                 parser = OfficeParser()
                 with pytest.raises(ParserError, match="pywin32"):
                     parser.parse(doc_path)
+
+
+class TestPdfOcrRealExecution:
+    @pytest.fixture(autouse=True)
+    def _check_tesseract(self):
+        import shutil
+        if not shutil.which("tesseract"):
+            pytest.skip("tesseract-ocr not installed")
+
+    def _make_image_pdf(self, tmp_path, name="scan.pdf"):
+        import fitz
+        from PIL import Image, ImageDraw, ImageFont
+        import io
+
+        img = Image.new("RGB", (600, 200), "white")
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
+        except (OSError, IOError):
+            font = ImageFont.load_default()
+        draw.text((50, 70), "SENSITIVE WORD", fill="black", font=font)
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        img_bytes = buf.getvalue()
+
+        path = str(tmp_path / name)
+        doc = fitz.open()
+        page = doc.new_page(width=600, height=200)
+        rect = fitz.Rect(0, 0, 600, 200)
+        page.insert_image(rect, stream=img_bytes)
+        doc.save(path)
+        doc.close()
+        return path
+
+    def test_ocr_real_extraction(self, tmp_path):
+        path = self._make_image_pdf(tmp_path)
+        parser = PdfParser(ocr_enabled=True)
+        result = parser.parse(path)
+        assert len(result.strip()) > 0
+
+    def test_ocr_disabled_skips_image_pdf(self, tmp_path):
+        path = self._make_image_pdf(tmp_path)
+        parser = PdfParser(ocr_enabled=False)
+        result = parser.parse(path)
+        assert "SENSITIVE" not in result.upper()
