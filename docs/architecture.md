@@ -137,31 +137,56 @@ BaseParser (抽象基类)
 
 ### 4.3 扫描引擎 (`src/checker.py`)
 
-**职责**: 文件发现 + 多进程并行扫描 + 结果汇总。
+**职责**: 两阶段扫描（发现→检测）+ 多进程并行扫描 + 内存感知提交 + BrokenProcessPool 恢复 + 结果汇总。
 
-**扫描流程**:
+**两阶段扫描流程**:
 ```
-1. 递归遍历指定目录，仅收集支持格式的文件列表
-   （.txt/.pdf/.doc/.docx/.ppt/.pptx/.xls/.xlsx/.zip/.tar/.tgz/.gz/.rar/.7z）
-2. 按文件列表提交给 ProcessPoolExecutor
-3. 每个 worker 进程:
-   a. 根据扩展名加载对应解析器
-   b. 解析文件获取文本（压缩包由 ArchiveParser 递归展开内部文件）
-   c. 在文本中匹配所有关键词
-   d. 对每个匹配项，提取关键词前后 N 个字符的上下文
-   e. 返回 FileResult(file_path, matches, failed)
-4. 主进程汇总所有结果:
-   - 有匹配: 按目录构建树形结构
-   - 无匹配: 不显示
-   - 解析失败（已识别格式但无法读取）: 单独归类到"检查失败"区域
-   - 不支持的格式: 直接跳过，不记录
+阶段 1 — 文件发现:
+  1. os.walk 递归遍历指定目录，收集所有支持格式的文件
+  2. 单文件 > MAX_SIZE (500MB) 的文件归入 large_files 列表
+  3. 其他文件归入 file_list 列表
+  4. 进度输出: "发现文件中 | 待检测文件: N"
+
+阶段 2 — 文件检测:
+  单 worker 模式:
+    - 逐文件内联调用 scan_single_file
+    - 处理完 file_list 后处理 large_files
+  多 worker 模式:
+    - 使用 ProcessPoolExecutor 提交任务
+    - 内存感知提交: inflight_bytes 跟踪在途文件估算大小
+    - 压缩包估算: 磁盘大小 × ARCHIVE_SIZE_MULTIPLIER (5)
+    - 内存预算: MAX_CONCURRENT_BYTES (1GB)
+    - 预算满时 wait(FIRST_COMPLETED) 等待完成
+    - large_files 在进程池外内联处理
+  进度输出: "扫描中 | 已检测: M/N (PP.P%) | 命中: X | 匹配: Y | 失败: Z | 已用时: Ts"
+```
+
+**BrokenProcessPool 恢复**:
+```
+1. 内层捕获 (future.result() / as_completed):
+   - 将该 future 对应的文件加入 large_files 列表
+   - 不增加 checked/fail_count 计数（留给 inline 处理时计数）
+2. 外层捕获 (executor.submit 抛出):
+   - 将所有 pending 中的文件加入 large_files
+   - 将 file_list[idx:] 未提交的文件加入 large_files
+   - 最后统一内联处理所有 large_files
+3. 不调整 worker 数量，仅降级为内联处理
 ```
 
 **关键函数**:
-- `discover_files(dir_path: str, extensions) -> list[str]` — 发现目标文件
+- `discover_files(dir_path: str, extensions) -> list[str]` — 发现目标文件（保留用于测试向后兼容）
 - `scan_directory(dir_path: str, keywords: list, ocr_enabled: bool, num_workers: int, check_archives: bool) -> dict` — 执行扫描
 - `_match_keywords(text: str, keywords: list) -> list[Match]` — 关键词匹配（支持子串匹配）
 - `_extract_context(text: str, start: int, end: int, context_chars: int = 50) -> str` — 提取上下文
+- `_estimate_file_bytes(fpath: str) -> int` — 估算文件内存占用（压缩包 ×5）
+- `_format_discovery(count: int) -> str` — 格式化阶段 1 进度
+- `_format_progress(checked, total, hits, match_count, fail_count, elapsed) -> str` — 格式化阶段 2 进度
+- `_process_result(fr, results, failures, verbose) -> tuple[bool, int]` — 处理单个扫描结果
+
+**关键常量**:
+- `MAX_CONCURRENT_BYTES = 1GB` — 多 worker 模式下同时在途文件的估算总大小上限
+- `ARCHIVE_SIZE_MULTIPLIER = 5` — 压缩包文件的磁盘大小乘以此系数作为内存估算
+- `MAX_SIZE = 500MB`（来自 `archive.py`）— 单文件超过此大小直接内联处理，不提交到进程池
 
 **匹配策略**:
 - 逐关键词在文本中查找（`str.find()` 循环），简单高效
@@ -300,6 +325,28 @@ GET  /api/cli/generate    — 生成 CLI 命令字符串
 - 每个文件独立处理，无共享状态，天然安全（内存隔离）
 - 文件列表在主进程构建，worker 只负责解析和匹配
 - 结果汇总在主进程完成
+
+### 6.1 两阶段扫描
+
+阶段 1（发现）和阶段 2（检测）严格分离：
+- 阶段 1 使用 `os.walk` 预收集所有文件路径，确保文件列表在扫描前完整确定
+- 优势：当 BrokenProcessPool 发生时，所有未处理文件路径已知，可完整恢复
+
+### 6.2 内存感知提交
+
+多 worker 模式下，通过 `inflight_bytes` 跟踪已提交但未完成的文件估算总大小：
+- 压缩包文件：`磁盘大小 × ARCHIVE_SIZE_MULTIPLIER (5)` 估算内存占用
+- 普通文件：直接使用磁盘大小
+- 当 `inflight_bytes + 新文件估算 > MAX_CONCURRENT_BYTES (1GB)` 时，`wait(FIRST_COMPLETED)` 等待完成后再提交
+- 单文件超过 `MAX_SIZE (500MB)` 不提交到进程池，直接内联处理
+
+### 6.3 BrokenProcessPool 恢复
+
+当进程池崩溃时：
+1. 内层捕获（`future.result()` 抛出）：将对应文件移入 `large_files`，等待后续内联处理
+2. 外层捕获（`executor.submit()` 抛出）：将所有 pending 文件 + 未提交的 `file_list[idx:]` 移入 `large_files`
+3. 最后统一内联调用 `scan_single_file` 处理所有 `large_files`
+4. **不调整 worker 数量**，仅降级为内联处理
 
 ## 7. 错误处理
 

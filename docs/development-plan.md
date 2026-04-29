@@ -271,6 +271,12 @@ Phase 2 和 Phase 3 可部分并行，但推荐按顺序以保持一致性。
   - 多进程并行扫描（ProcessPoolExecutor，worker 数可配置）
   - 无共享状态设计（内存隔离，天然线程安全）
   - 压缩包安全限制（深度/大小/路径遍历防护）
+  - 两阶段扫描架构：阶段 1 预收集所有文件路径（os.walk），阶段 2 扫描检测
+  - 内存感知提交：`MAX_CONCURRENT_BYTES=1GB` 限制同时在途文件估算总大小
+  - 压缩包内存估算：磁盘大小 × `ARCHIVE_SIZE_MULTIPLIER=5`
+  - 大文件内联处理：单文件 > `MAX_SIZE` (500MB) 不提交进程池，走内联 `scan_single_file`
+  - BrokenProcessPool 恢复：未完成文件移入 `large_files`，最后内联处理，不调整 worker 数
+  - 进度输出：阶段 1 `发现文件中 | 待检测文件: N`，阶段 2 `扫描中 | 已检测: M/N (PP.P%) | 命中: X | 匹配: Y | 失败: Z | 已用时: Ts`
 
 - [x] 4.4 编写 README.md
   - 项目简介
@@ -282,8 +288,8 @@ Phase 2 和 Phase 3 可部分并行，但推荐按顺序以保持一致性。
   - 项目结构说明
 
 - [x] 4.5 端到端验证
-  - 241 条测试全部通过，总覆盖率 98%
-  - 核心模块覆盖率：checker 100%、archive 100%、pdf 100%、txt 100%、office 99%、cli 99%、report 99%、config 87%
+  - 255 条测试全部通过
+  - 新增测试类：TestTwoPhaseProgress, TestLargeFileInline, TestEstimateFileBytes, TestMemoryThrottling, TestBrokenPoolRecovery
 
 ### 验收标准
 

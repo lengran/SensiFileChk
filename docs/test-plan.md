@@ -119,6 +119,41 @@
 | TC-PAR-004 | 结果汇总 | 多 worker 结果 | 无遗漏，无重复 | 结果完整 |
 | TC-PAR-005 | 分片策略 | 10000 个文件 | 分批处理，无内存溢出 | 内存稳定 |
 
+### 2.5 两阶段扫描测试 (`tests/test_checker.py` — `TestTwoPhaseProgress`)
+
+| 用例 ID | 测试内容 | 输入 | 预期输出 | 验收标准 |
+|---------|---------|------|---------|---------|
+| TC-PHASE-001 | 阶段 1 输出 | 3 个 txt 文件 | stdout 含 "发现文件中" | 阶段 1 进度可见 |
+| TC-PHASE-002 | 阶段 2 百分比 | 3 个含敏感词的 txt 文件 | stdout 含 "已检测: 3/3" 和 "100.0%" | 百分比格式正确 |
+| TC-PHASE-003 | 多 worker 两阶段 | 3 个 txt 文件 + worker=2 | 两个阶段进度均输出 | 多 worker 模式正确 |
+
+### 2.6 大文件内联处理测试 (`tests/test_checker.py` — `TestLargeFileInline`)
+
+| 用例 ID | 测试内容 | 输入 | 预期输出 | 验收标准 |
+|---------|---------|------|---------|---------|
+| TC-LARGE-001 | 大文件多 worker | 小文件 + 大文件 (>500MB)，worker=2 | 两个文件均被检测 | 大文件内联处理不丢失 |
+| TC-LARGE-002 | 大文件单 worker | 大文件 (>500MB)，worker=1 | 正常匹配 | 单 worker 模式正确 |
+
+### 2.7 文件内存估算测试 (`tests/test_checker.py` — `TestEstimateFileBytes`)
+
+| 用例 ID | 测试内容 | 输入 | 预期输出 | 验收标准 |
+|---------|---------|------|---------|---------|
+| TC-EST-001 | 普通文件 | 5 字节 txt 文件 | 返回 5 | 大小等于磁盘大小 |
+| TC-EST-002 | 压缩包文件 | 100 字节 zip 文件 | 返回 500 | 磁盘大小 × ARCHIVE_SIZE_MULTIPLIER |
+| TC-EST-003 | 不存在的文件 | 不存在的路径 | 返回 0 | 不抛异常 |
+
+### 2.8 内存感知提交测试 (`tests/test_checker.py` — `TestMemoryThrottling`)
+
+| 用例 ID | 测试内容 | 输入 | 预期输出 | 验收标准 |
+|---------|---------|------|---------|---------|
+| TC-MEM-001 | 低预算节流 | 5 个文件 + MAX_CONCURRENT_BYTES=1，worker=2 | 全部扫描完成 | 节流逻辑不影响正确性 |
+
+### 2.9 BrokenProcessPool 恢复测试 (`tests/test_checker.py` — `TestBrokenPoolRecovery`)
+
+| 用例 ID | 测试内容 | 输入 | 预期输出 | 验收标准 |
+|---------|---------|------|---------|---------|
+| TC-BPP-001 | 进程池崩溃恢复 | 3 个文件，第 3 次 submit 抛 BrokenProcessPool | results + failures 总数 = 3 | 所有文件被内联处理，无遗漏 |
+
 ---
 
 ## Phase 3 测试验收

@@ -2,11 +2,12 @@ import os
 import re
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .parsers.archive import ArchiveParser
+from .parsers.archive import ArchiveParser, MAX_SIZE
 from .parsers.base import ParserError
 from .parsers.office import OfficeParser
 from .parsers.pdf import PdfParser
@@ -18,6 +19,9 @@ SUPPORTED_EXTENSIONS = {
 }
 
 ARCHIVE_EXTENSIONS = {".zip", ".tar", ".tgz", ".gz", ".rar", ".7z"}
+
+MAX_CONCURRENT_BYTES = 1024 * 1024 * 1024
+ARCHIVE_SIZE_MULTIPLIER = 5
 
 
 @dataclass
@@ -70,8 +74,24 @@ def _throttled_print(last_time: float, min_interval: float, msg: str) -> float:
     return last_time
 
 
-def _format_progress(discovered: int, checked: int, hits: int, match_count: int, fail_count: int, elapsed: float) -> str:
-    return f"扫描中 | 已发现: {discovered} | 已检测: {checked} | 命中: {hits} | 匹配: {match_count} | 失败: {fail_count} | 已用时: {elapsed:.1f}s"
+def _format_discovery(count: int) -> str:
+    return f"发现文件中 | 待检测文件: {count}"
+
+
+def _format_progress(checked: int, total: int, hits: int, match_count: int, fail_count: int, elapsed: float) -> str:
+    pct = checked / total * 100 if total > 0 else 0.0
+    return f"扫描中 | 已检测: {checked}/{total} ({pct:.1f}%) | 命中: {hits} | 匹配: {match_count} | 失败: {fail_count} | 已用时: {elapsed:.1f}s"
+
+
+def _estimate_file_bytes(fpath: str) -> int:
+    try:
+        size = os.path.getsize(fpath)
+    except OSError:
+        return 0
+    _, ext = os.path.splitext(fpath)
+    if ext.lower() in ARCHIVE_EXTENSIONS:
+        size *= ARCHIVE_SIZE_MULTIPLIER
+    return size
 
 
 def discover_files(dir_path: str, extensions: Optional[set] = None) -> list[str]:
@@ -157,6 +177,20 @@ def _worker_task(args: tuple) -> FileResult:
     return scan_single_file(file_path, keywords, context_chars, ocr_enabled, check_archives)
 
 
+def _process_result(fr, results, failures, verbose):
+    if fr.error:
+        failures.append(fr)
+        if verbose:
+            print(f"  [失败] {fr.file_path}: {fr.error}")
+        return False, 0
+    elif fr.matches:
+        results.append(fr)
+        if verbose:
+            print(f"  [命中] {fr.file_path}: {len(fr.matches)} 处匹配")
+        return True, len(fr.matches)
+    return False, 0
+
+
 def scan_directory(
     dir_path: str,
     keywords: list[str],
@@ -168,7 +202,6 @@ def scan_directory(
 ) -> dict:
     results = []
     failures = []
-    discovered = 0
     checked = 0
     hits = 0
     match_count = 0
@@ -176,95 +209,130 @@ def scan_directory(
     _last_time = 0.0
     _start_time = time.time()
 
+    file_list = []
+    large_files = []
+
+    for root, _dirs, dir_files in os.walk(dir_path):
+        for fname in dir_files:
+            _, ext = os.path.splitext(fname)
+            if ext.lower() not in SUPPORTED_EXTENSIONS:
+                continue
+            fpath = os.path.join(root, fname)
+            try:
+                fsize = os.path.getsize(fpath)
+            except OSError:
+                fsize = 0
+            if fsize > MAX_SIZE:
+                large_files.append(fpath)
+            else:
+                file_list.append(fpath)
+        msg = _format_discovery(len(file_list) + len(large_files))
+        _last_time = _throttled_print(_last_time, 5.0, msg)
+
+    total = len(file_list) + len(large_files)
+    if total > 0:
+        sys.stdout.write(f"\r{_format_discovery(total)}\n")
+        sys.stdout.flush()
+
+    def _handle_fr(fr):
+        nonlocal checked, hits, match_count, fail_count
+        checked += 1
+        is_hit, n_matches = _process_result(fr, results, failures, verbose)
+        if fr.error:
+            fail_count += 1
+        elif is_hit:
+            hits += 1
+            match_count += n_matches
+
+    def _print_progress():
+        nonlocal _last_time
+        msg = _format_progress(checked, total, hits, match_count, fail_count, time.time() - _start_time)
+        _last_time = _throttled_print(_last_time, 5.0, msg)
+
     if num_workers <= 1:
-        for root, _dirs, dir_files in os.walk(dir_path):
-            for fname in dir_files:
-                _, ext = os.path.splitext(fname)
-                if ext.lower() not in SUPPORTED_EXTENSIONS:
-                    continue
-                fpath = os.path.join(root, fname)
-                discovered += 1
-                fr = scan_single_file(fpath, keywords, context_chars, ocr_enabled, check_archives)
-                checked += 1
-                if fr.error:
-                    failures.append(fr)
-                    fail_count += 1
-                    if verbose:
-                        print(f"  [失败] {fpath}: {fr.error}")
-                elif fr.matches:
-                    results.append(fr)
-                    hits += 1
-                    match_count += len(fr.matches)
-                    if verbose:
-                        print(f"  [命中] {fpath}: {len(fr.matches)} 处匹配")
-                msg = _format_progress(discovered, checked, hits, match_count, fail_count, time.time() - _start_time)
-                _last_time = _throttled_print(_last_time, 5.0, msg)
-        if discovered > 0:
-            msg = _format_progress(discovered, checked, hits, match_count, fail_count, time.time() - _start_time)
-            sys.stdout.write(f"\r{msg}\n")
-            sys.stdout.flush()
+        for fpath in file_list:
+            fr = scan_single_file(fpath, keywords, context_chars, ocr_enabled, check_archives)
+            _handle_fr(fr)
+            _print_progress()
+        for fpath in large_files:
+            fr = scan_single_file(fpath, keywords, context_chars, ocr_enabled, check_archives)
+            _handle_fr(fr)
+            _print_progress()
     else:
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            pending = set()
+        try:
+            pending = {}
+            inflight_bytes = 0
+            idx = 0
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
 
-            for root, _dirs, dir_files in os.walk(dir_path):
-                for fname in dir_files:
-                    _, ext = os.path.splitext(fname)
-                    if ext.lower() not in SUPPORTED_EXTENSIONS:
-                        continue
-                    fpath = os.path.join(root, fname)
-                    discovered += 1
+                while idx < len(file_list):
+                    fpath = file_list[idx]
+                    est_bytes = _estimate_file_bytes(fpath)
+
+                    while inflight_bytes + est_bytes > MAX_CONCURRENT_BYTES and pending:
+                        done_set, _ = wait(pending.keys(), return_when=FIRST_COMPLETED)
+                        for future in done_set:
+                            f, eb = pending.pop(future)
+                            inflight_bytes -= eb
+                            try:
+                                fr = future.result()
+                            except BrokenProcessPool:
+                                large_files.append(f)
+                                continue
+                            except Exception as e:
+                                fr = FileResult(file_path=f, error=f"worker 异常: {e}")
+                            _handle_fr(fr)
+
                     future = executor.submit(_worker_task, (fpath, keywords, context_chars, ocr_enabled, check_archives))
-                    pending.add(future)
+                    pending[future] = (fpath, est_bytes)
+                    inflight_bytes += est_bytes
+                    idx += 1
 
-                done = {f for f in pending if f.done()}
-                pending -= done
-                for future in done:
+                    done_set = {f for f in pending if f.done()}
+                    for future in done_set:
+                        f, eb = pending.pop(future)
+                        inflight_bytes -= eb
+                        try:
+                            fr = future.result()
+                        except BrokenProcessPool:
+                            large_files.append(f)
+                            continue
+                        except Exception as e:
+                            fr = FileResult(file_path=f, error=f"worker 异常: {e}")
+                        _handle_fr(fr)
+
+                    _print_progress()
+
+                for future in as_completed(pending):
+                    f, eb = pending.pop(future)
+                    inflight_bytes -= eb
                     try:
                         fr = future.result()
+                    except BrokenProcessPool:
+                        large_files.append(f)
+                        continue
                     except Exception as e:
-                        fr = FileResult(file_path="?", error=f"worker 异常: {e}")
-                    checked += 1
-                    if fr.error:
-                        failures.append(fr)
-                        fail_count += 1
-                        if verbose:
-                            print(f"  [失败] {fr.file_path}: {fr.error}")
-                    elif fr.matches:
-                        results.append(fr)
-                        hits += 1
-                        match_count += len(fr.matches)
-                        if verbose:
-                            print(f"  [命中] {fr.file_path}: {len(fr.matches)} 处匹配")
+                        fr = FileResult(file_path=f, error=f"worker 异常: {e}")
+                    _handle_fr(fr)
+                    _print_progress()
 
-                if discovered > 0:
-                    msg = _format_progress(discovered, checked, hits, match_count, fail_count, time.time() - _start_time)
-                    _last_time = _throttled_print(_last_time, 5.0, msg)
+        except BrokenProcessPool:
+            for _future, (f, _eb) in list(pending.items()):
+                large_files.append(f)
+            pending.clear()
+            large_files.extend(file_list[idx:])
 
-            for future in as_completed(pending):
-                try:
-                    fr = future.result()
-                except Exception as e:
-                    fr = FileResult(file_path="?", error=f"worker 异常: {e}")
-                checked += 1
-                if fr.error:
-                    failures.append(fr)
-                    fail_count += 1
-                    if verbose:
-                        print(f"  [失败] {fr.file_path}: {fr.error}")
-                elif fr.matches:
-                    results.append(fr)
-                    hits += 1
-                    match_count += len(fr.matches)
-                    if verbose:
-                        print(f"  [命中] {fr.file_path}: {len(fr.matches)} 处匹配")
-                msg = _format_progress(discovered, checked, hits, match_count, fail_count, time.time() - _start_time)
-                _last_time = _throttled_print(_last_time, 5.0, msg)
+        for fpath in large_files:
+            fr = scan_single_file(fpath, keywords, context_chars, ocr_enabled, check_archives)
+            _handle_fr(fr)
+            _print_progress()
 
-            if discovered > 0:
-                msg = _format_progress(discovered, checked, hits, match_count, fail_count, time.time() - _start_time)
-                sys.stdout.write(f"\r{msg}\n")
-                sys.stdout.flush()
+        large_files = []
+
+    if total > 0:
+        msg = _format_progress(checked, total, hits, match_count, fail_count, time.time() - _start_time)
+        sys.stdout.write(f"\r{msg}\n")
+        sys.stdout.flush()
 
     results.sort(key=lambda r: r.file_path)
     failures.sort(key=lambda r: r.file_path)

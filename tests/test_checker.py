@@ -372,3 +372,102 @@ class TestMultiWorkerVerbose:
             result = scan_directory(str(tmp_path), ["国家机密"], num_workers=2)
             assert len(result["failures"]) == 1
             assert "worker 异常" in result["failures"][0].error
+
+
+class TestTwoPhaseProgress:
+    def test_discovery_phase_output(self, tmp_path, capsys):
+        for i in range(3):
+            (tmp_path / f"f{i}.txt").write_text("正常", encoding="utf-8")
+        scan_directory(str(tmp_path), ["机密"], verbose=False)
+        out = capsys.readouterr().out
+        assert "发现文件中" in out
+
+    def test_scan_phase_with_percentage(self, tmp_path, capsys):
+        for i in range(3):
+            (tmp_path / f"f{i}.txt").write_text("国家机密", encoding="utf-8")
+        scan_directory(str(tmp_path), ["国家机密"], verbose=False)
+        out = capsys.readouterr().out
+        assert "扫描中" in out
+        assert "已检测: 3/3" in out
+        assert "100.0%" in out
+
+    def test_discovery_phase_multi_worker(self, tmp_path, capsys):
+        for i in range(3):
+            (tmp_path / f"f{i}.txt").write_text("国家机密", encoding="utf-8")
+        scan_directory(str(tmp_path), ["国家机密"], num_workers=2, verbose=False)
+        out = capsys.readouterr().out
+        assert "发现文件中" in out
+        assert "扫描中" in out
+
+
+class TestLargeFileInline:
+    def test_large_file_goes_inline(self, tmp_path, monkeypatch):
+        (tmp_path / "small.txt").write_text("国家机密", encoding="utf-8")
+        (tmp_path / "big.txt").write_text("国家机密在大文件中", encoding="utf-8")
+        monkeypatch.setattr(os.path, "getsize", lambda p: 600 * 1024 * 1024 if "big" in p else 10)
+        result = scan_directory(str(tmp_path), ["国家机密"], num_workers=2)
+        assert len(result["results"]) == 2
+
+    def test_large_file_single_worker(self, tmp_path, monkeypatch):
+        (tmp_path / "big.txt").write_text("国家机密", encoding="utf-8")
+        monkeypatch.setattr(os.path, "getsize", lambda p: 600 * 1024 * 1024)
+        result = scan_directory(str(tmp_path), ["国家机密"], num_workers=1)
+        assert len(result["results"]) == 1
+
+
+class TestEstimateFileBytes:
+    def test_regular_file(self, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("hello", encoding="utf-8")
+        from src.checker import _estimate_file_bytes
+        est = _estimate_file_bytes(str(f))
+        assert est == 5
+
+    def test_archive_file_multiplier(self, tmp_path):
+        f = tmp_path / "test.zip"
+        f.write_bytes(b"x" * 100)
+        from src.checker import _estimate_file_bytes
+        est = _estimate_file_bytes(str(f))
+        assert est == 500
+
+    def test_nonexistent_file(self):
+        from src.checker import _estimate_file_bytes
+        est = _estimate_file_bytes("/nonexistent/file.txt")
+        assert est == 0
+
+
+class TestMemoryThrottling:
+    def test_throttle_with_low_budget(self, tmp_path, monkeypatch):
+        from src.checker import MAX_CONCURRENT_BYTES
+        for i in range(5):
+            (tmp_path / f"f{i}.txt").write_text(f"国家机密{i}", encoding="utf-8")
+        monkeypatch.setattr("src.checker.MAX_CONCURRENT_BYTES", 1)
+        result = scan_directory(str(tmp_path), ["国家机密"], num_workers=2)
+        assert len(result["results"]) == 5
+
+
+class TestBrokenPoolRecovery:
+    def test_broken_pool_moves_to_inline(self, tmp_path, monkeypatch):
+        from unittest.mock import patch, MagicMock
+        from concurrent.futures import ProcessPoolExecutor as _PPE
+        from concurrent.futures.process import BrokenProcessPool
+        for i in range(3):
+            (tmp_path / f"f{i}.txt").write_text(f"国家机密{i}", encoding="utf-8")
+
+        original_submit = _PPE.submit
+
+        call_count = 0
+
+        def broken_submit(self, fn, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                f = original_submit(self, fn, *args, **kwargs)
+                return f
+            raise BrokenProcessPool("test broken pool")
+
+        with patch.object(_PPE, "submit", broken_submit):
+            result = scan_directory(str(tmp_path), ["国家机密"], num_workers=2)
+
+        total = len(result["results"]) + len(result["failures"])
+        assert total == 3
