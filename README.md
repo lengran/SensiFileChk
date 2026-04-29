@@ -47,40 +47,30 @@ pip install -e .
 
 ## 快速开始
 
-### 1. 添加敏感词
+### 1. 启动 Web 管理端
 
 ```bash
-# 添加单个关键词
-sensi-check add "国家机密"
-
-# 添加多个关键词
-sensi-check add "绝密" "内部资料" "敏感信息"
-
-# 查看已有关键词
-sensi-check list
-```
-
-### 2. 执行扫描
-
-```bash
-# 基础扫描
-sensi-check check /path/to/scan -o report.html
-
-# 使用多进程加速
-sensi-check check /path/to/scan -o report.html -w 4
-
-# 显示扫描过程
-sensi-check check /path/to/scan -o report.html --verbose
-```
-
-### 3. 启动 Web 管理端
-
-```bash
-# 启动 Web 服务
 sensi-check serve
 ```
 
-访问 http://127.0.0.1:8000 管理敏感词
+浏览器访问 http://127.0.0.1:8000
+
+### 2. 通过 Web 管理敏感词
+
+- **添加关键词**：在输入框中输入关键词，点击添加或按回车
+- **删除关键词**：点击每个关键词右侧的删除按钮
+- **OCR 开关**：通过页面上的开关控件开启/关闭 PDF 图片文字识别
+
+### 3. 通过 Web 生成扫描命令
+
+在页面的"CLI 命令生成器"区域：
+1. 填写扫描目录路径和报告输出路径
+2. 选择 worker 数量（或勾选"自动"使用 CPU 核心数）
+3. 点击复制按钮，将命令粘贴到终端执行
+
+### 4. 执行扫描
+
+扫描完成后在指定路径生成 HTML 报告，包含敏感词高亮、上下文、行号和目录折叠。
 
 ## 命令参考
 
@@ -99,27 +89,23 @@ sensi-check check <目录路径> -o <报告路径> [选项]
 ### 关键词管理 (add/remove/list)
 
 ```bash
-# 添加关键词
 sensi-check add <关键词1> [关键词2] ...
-
-# 删除关键词
 sensi-check remove <关键词>
-
-# 列出所有关键词
 sensi-check list
-
-# 列出关键词并显示数量
 sensi-check list --count
 ```
 
 ### 配置管理 (config)
 
 ```bash
-# 查看 OCR 状态
 sensi-check config show-ocr
-
-# 开启/关闭 OCR
 sensi-check config set-ocr on|off
+```
+
+### Web 管理端 (serve)
+
+```bash
+sensi-check serve [--host 127.0.0.1] [--port 8000]
 ```
 
 ## 支持的文件格式
@@ -135,16 +121,6 @@ sensi-check config set-ocr on|off
 | ZIP 压缩包 | .zip | 内置 |
 | RAR 压缩包 | .rar | rarfile |
 | 7Z 压缩包 | .7z | py7zr |
-
-## 运行测试
-
-```bash
-# 运行所有测试
-pytest tests/ -v
-
-# 覆盖率测试
-pytest tests/ --cov=src --cov-report=html
-```
 
 ## 项目结构
 
