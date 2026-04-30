@@ -94,6 +94,13 @@ def _estimate_file_bytes(fpath: str) -> int:
     return size
 
 
+def _get_file_size(fpath: str) -> int:
+    try:
+        return os.path.getsize(fpath)
+    except OSError:
+        return 0
+
+
 def discover_files(dir_path: str, extensions: Optional[set] = None) -> list[str]:
     ext_filter = extensions or SUPPORTED_EXTENSIONS
     result = []
@@ -210,26 +217,17 @@ def scan_directory(
     _start_time = time.time()
 
     file_list = []
-    large_files = []
 
     for root, _dirs, dir_files in os.walk(dir_path):
         for fname in dir_files:
             _, ext = os.path.splitext(fname)
             if ext.lower() not in SUPPORTED_EXTENSIONS:
                 continue
-            fpath = os.path.join(root, fname)
-            try:
-                fsize = os.path.getsize(fpath)
-            except OSError:
-                fsize = 0
-            if fsize > MAX_SIZE:
-                large_files.append(fpath)
-            else:
-                file_list.append(fpath)
-        msg = _format_discovery(len(file_list) + len(large_files))
+            file_list.append(os.path.join(root, fname))
+        msg = _format_discovery(len(file_list))
         _last_time = _throttled_print(_last_time, 5.0, msg)
 
-    total = len(file_list) + len(large_files)
+    total = len(file_list)
     if total > 0:
         sys.stdout.write(f"\r{_format_discovery(total)}\n")
         sys.stdout.flush()
@@ -254,11 +252,8 @@ def scan_directory(
             fr = scan_single_file(fpath, keywords, context_chars, ocr_enabled, check_archives)
             _handle_fr(fr)
             _print_progress()
-        for fpath in large_files:
-            fr = scan_single_file(fpath, keywords, context_chars, ocr_enabled, check_archives)
-            _handle_fr(fr)
-            _print_progress()
     else:
+        large_files = []
         try:
             pending = {}
             inflight_bytes = 0
@@ -267,6 +262,10 @@ def scan_directory(
 
                 while idx < len(file_list):
                     fpath = file_list[idx]
+                    if _get_file_size(fpath) > MAX_SIZE:
+                        large_files.append(fpath)
+                        idx += 1
+                        continue
                     est_bytes = _estimate_file_bytes(fpath)
 
                     while inflight_bytes + est_bytes > MAX_CONCURRENT_BYTES and pending:

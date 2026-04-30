@@ -271,7 +271,9 @@ Phase 2 和 Phase 3 可部分并行，但推荐按顺序以保持一致性。
   - 多进程并行扫描（ProcessPoolExecutor，worker 数可配置）
   - 无共享状态设计（内存隔离，天然线程安全）
   - 压缩包安全限制（深度/大小/路径遍历防护）
-  - 两阶段扫描架构：阶段 1 预收集所有文件路径（os.walk），阶段 2 扫描检测
+  - 两阶段扫描架构：阶段 1 预收集所有文件路径（os.walk，零 stat），阶段 2 扫描检测
+  - 阶段 1 零 stat 设计：仅按扩展名过滤，不调用 os.path.getsize()，避免 stat 系统调用拖慢目录遍历
+  - 阶段 2 按需 stat：多 worker 提交前调用 getsize() 判断大文件和估算内存；单 worker 无需 stat
   - 内存感知提交：`MAX_CONCURRENT_BYTES=1GB` 限制同时在途文件估算总大小
   - 压缩包内存估算：磁盘大小 × `ARCHIVE_SIZE_MULTIPLIER=5`
   - 大文件内联处理：单文件 > `MAX_SIZE` (500MB) 不提交进程池，走内联 `scan_single_file`

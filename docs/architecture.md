@@ -141,18 +141,20 @@ BaseParser (抽象基类)
 
 **两阶段扫描流程**:
 ```
-阶段 1 — 文件发现:
-  1. os.walk 递归遍历指定目录，收集所有支持格式的文件
-  2. 单文件 > MAX_SIZE (500MB) 的文件归入 large_files 列表
-  3. 其他文件归入 file_list 列表
+阶段 1 — 文件发现（零 stat）:
+  1. os.walk 递归遍历指定目录，仅按扩展名过滤，收集所有支持格式的文件路径
+  2. 不调用 os.path.getsize()，避免 stat 系统调用拖慢目录遍历
+  3. 所有文件统一归入 file_list
   4. 进度输出: "发现文件中 | 待检测文件: N"
 
 阶段 2 — 文件检测:
   单 worker 模式:
     - 逐文件内联调用 scan_single_file
-    - 处理完 file_list 后处理 large_files
+    - 不需要 stat（无并发内存风险）
   多 worker 模式:
-    - 使用 ProcessPoolExecutor 提交任务
+    - 提交前调用 os.path.getsize():
+      - 单文件 > MAX_SIZE (500MB) → 归入 large_files，不提交进程池
+      - 否则估算 inflight_bytes 并提交
     - 内存感知提交: inflight_bytes 跟踪在途文件估算大小
     - 压缩包估算: 磁盘大小 × ARCHIVE_SIZE_MULTIPLIER (5)
     - 内存预算: MAX_CONCURRENT_BYTES (1GB)
@@ -329,16 +331,19 @@ GET  /api/cli/generate    — 生成 CLI 命令字符串
 ### 6.1 两阶段扫描
 
 阶段 1（发现）和阶段 2（检测）严格分离：
-- 阶段 1 使用 `os.walk` 预收集所有文件路径，确保文件列表在扫描前完整确定
-- 优势：当 BrokenProcessPool 发生时，所有未处理文件路径已知，可完整恢复
+- 阶段 1 使用 `os.walk` 预收集所有文件路径，**不调用 stat**，仅按扩展名过滤
+- 阶段 2 在提交/处理文件前按需调用 `os.path.getsize()` 做大小判断和内存估算
+- 优势：阶段 1 速度不受 stat 系统调用延迟制约；当 BrokenProcessPool 发生时，所有未处理文件路径已知，可完整恢复
 
 ### 6.2 内存感知提交
 
-多 worker 模式下，通过 `inflight_bytes` 跟踪已提交但未完成的文件估算总大小：
+多 worker 模式下，在提交前调用 `os.path.getsize()` 获取文件大小：
 - 压缩包文件：`磁盘大小 × ARCHIVE_SIZE_MULTIPLIER (5)` 估算内存占用
 - 普通文件：直接使用磁盘大小
-- 当 `inflight_bytes + 新文件估算 > MAX_CONCURRENT_BYTES (1GB)` 时，`wait(FIRST_COMPLETED)` 等待完成后再提交
 - 单文件超过 `MAX_SIZE (500MB)` 不提交到进程池，直接内联处理
+- 通过 `inflight_bytes` 跟踪已提交但未完成的文件估算总大小
+- 当 `inflight_bytes + 新文件估算 > MAX_CONCURRENT_BYTES (1GB)` 时，`wait(FIRST_COMPLETED)` 等待完成后再提交
+- 单 worker 模式无需 stat（全部内联处理，无并发内存风险）
 
 ### 6.3 BrokenProcessPool 恢复
 
