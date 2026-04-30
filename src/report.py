@@ -118,7 +118,7 @@ def _highlight_keyword(context: str, keyword: str) -> str:
     if not keyword:
         return context
     pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-    return pattern.sub(f'<mark class="highlight">{keyword}</mark>', context)
+    return pattern.sub(lambda m: f'<mark class="highlight">{m.group(0)}</mark>', context)
 
 
 def _render_failures(failures: list[FileResult], scan_dir: str) -> str:

@@ -57,11 +57,10 @@ Phase 2 和 Phase 3 可部分并行，但推荐按顺序以保持一致性。
   - 编码检测失败时抛出 `ParserError`
 
 - [x] 1.5 实现扫描引擎 `src/checker.py`
-  - `discover_files(dir_path: str, extensions) -> list[str]` — 递归遍历目录，过滤支持格式
   - `_match_keywords(text: str, keywords: list) -> list[Match]` — 逐关键词查找（英文大小写不敏感，中文大小写敏感）
   - `_extract_context(text: str, start: int, end: int, context_chars: int = 50) -> str` — 提取上下文
   - `scan_single_file(file_path: str, keywords: list) -> FileResult` — 单文件扫描
-  - `scan_directory(dir_path: str, keywords: list) -> dict` — 扫描入口（支持单进程和多进程）
+  - `scan_directory(dir_path: str, keywords: list) -> dict` — 扫描入口（支持单进程和多进程，内含 Phase 1 os.walk 文件发现）
   - 支持 `--context N` 参数控制上下文字符数
 
 - [x] 1.6 实现 HTML 报告生成 `src/report.py`

@@ -176,11 +176,12 @@ BaseParser (抽象基类)
 ```
 
 **关键函数**:
-- `discover_files(dir_path: str, extensions) -> list[str]` — 发现目标文件（保留用于测试向后兼容）
 - `scan_directory(dir_path: str, keywords: list, ocr_enabled: bool, num_workers: int, check_archives: bool) -> dict` — 执行扫描
 - `_match_keywords(text: str, keywords: list) -> list[Match]` — 关键词匹配（支持子串匹配）
 - `_extract_context(text: str, start: int, end: int, context_chars: int = 50) -> str` — 提取上下文
-- `_estimate_file_bytes(fpath: str) -> int` — 估算文件内存占用（压缩包 ×5）
+- `_estimate_file_bytes(fpath: str) -> int` — 估算文件内存占用（压缩包 ×5）[已拆分]
+- `_get_file_size(fpath: str) -> int` — 获取文件磁盘大小（OSError 时返回 0）
+- `_estimate_bytes_from_size(raw_size: int, ext: str) -> int` — 纯计算：压缩包磁盘大小 ×5，普通文件原样返回
 - `_format_discovery(count: int) -> str` — 格式化阶段 1 进度
 - `_format_progress(checked, total, hits, match_count, fail_count, elapsed) -> str` — 格式化阶段 2 进度
 - `_process_result(fr, results, failures, verbose) -> tuple[bool, int]` — 处理单个扫描结果
@@ -301,7 +302,7 @@ GET  /api/cli/generate    — 生成 CLI 命令字符串
   cli.py: 解析参数，加载配置
        │
        ▼
-  checker.py: discover_files() 收集文件
+   checker.py: os.walk 收集文件
        │
        ▼
   ProcessPoolExecutor: 分发任务到各 worker

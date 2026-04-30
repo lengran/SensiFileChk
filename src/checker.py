@@ -83,17 +83,6 @@ def _format_progress(checked: int, total: int, hits: int, match_count: int, fail
     return f"扫描中 | 已检测: {checked}/{total} ({pct:.1f}%) | 命中: {hits} | 匹配: {match_count} | 失败: {fail_count} | 已用时: {elapsed:.1f}s"
 
 
-def _estimate_file_bytes(fpath: str) -> int:
-    try:
-        size = os.path.getsize(fpath)
-    except OSError:
-        return 0
-    _, ext = os.path.splitext(fpath)
-    if ext.lower() in ARCHIVE_EXTENSIONS:
-        size *= ARCHIVE_SIZE_MULTIPLIER
-    return size
-
-
 def _get_file_size(fpath: str) -> int:
     try:
         return os.path.getsize(fpath)
@@ -101,16 +90,10 @@ def _get_file_size(fpath: str) -> int:
         return 0
 
 
-def discover_files(dir_path: str, extensions: Optional[set] = None) -> list[str]:
-    ext_filter = extensions or SUPPORTED_EXTENSIONS
-    result = []
-    for root, _dirs, files in os.walk(dir_path):
-        for fname in files:
-            fpath = os.path.join(root, fname)
-            _, ext = os.path.splitext(fname)
-            if ext.lower() in ext_filter:
-                result.append(fpath)
-    return sorted(result)
+def _estimate_bytes_from_size(raw_size: int, ext: str) -> int:
+    if ext.lower() in ARCHIVE_EXTENSIONS:
+        return raw_size * ARCHIVE_SIZE_MULTIPLIER
+    return raw_size
 
 
 def _compute_line_number(text: str, char_pos: int) -> int:
@@ -262,11 +245,13 @@ def scan_directory(
 
                 while idx < len(file_list):
                     fpath = file_list[idx]
-                    if _get_file_size(fpath) > MAX_SIZE:
+                    raw_size = _get_file_size(fpath)
+                    if raw_size > MAX_SIZE:
                         large_files.append(fpath)
                         idx += 1
                         continue
-                    est_bytes = _estimate_file_bytes(fpath)
+                    _, ext = os.path.splitext(fpath)
+                    est_bytes = _estimate_bytes_from_size(raw_size, ext)
 
                     while inflight_bytes + est_bytes > MAX_CONCURRENT_BYTES and pending:
                         done_set, _ = wait(pending.keys(), return_when=FIRST_COMPLETED)

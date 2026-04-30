@@ -35,7 +35,13 @@ class OfficeParser(BaseParser):
             from docx import Document
 
             doc = Document(file_path)
-            return "\n".join(p.text for p in doc.paragraphs)
+            texts = [p.text for p in doc.paragraphs]
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        if cell.text:
+                            texts.append(cell.text)
+            return "\n".join(texts)
         except Exception as e:
             raise ParserError(f"解析 docx 失败: {file_path}: {e}") from e
 
@@ -50,6 +56,11 @@ class OfficeParser(BaseParser):
                     if shape.has_text_frame:
                         for para in shape.text_frame.paragraphs:
                             texts.append(para.text)
+                    if hasattr(shape, 'has_table') and shape.has_table:
+                        for row in shape.table.rows:
+                            for cell in row.cells:
+                                if cell.text:
+                                    texts.append(cell.text)
             return "\n".join(texts)
         except Exception as e:
             raise ParserError(f"解析 pptx 失败: {file_path}: {e}") from e

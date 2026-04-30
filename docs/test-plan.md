@@ -115,9 +115,9 @@
 |---------|---------|------|---------|---------|
 | TC-PAR-001 | 1 worker | 100 个文件，worker=1 | 全部扫描完成 | 结果与单进程一致 |
 | TC-PAR-002 | 4 worker | 100 个文件，worker=4 | 全部扫描完成 | 结果与单进程一致 |
-| TC-PAR-003 | 并行加速 | 1000 个文件，worker=1 vs worker=4 | worker=4 耗时显著更短 | 至少 2 倍加速 |
+| TC-PAR-003 | 并行加速 | 1000 个文件，worker=1 vs worker=4 | worker=4 耗时显著更短 | 依赖硬件，不纳入自动化测试 |
 | TC-PAR-004 | 结果汇总 | 多 worker 结果 | 无遗漏，无重复 | 结果完整 |
-| TC-PAR-005 | 分片策略 | 10000 个文件 | 分批处理，无内存溢出 | 内存稳定 |
+| TC-PAR-005 | 分片策略 | 10000 个文件 | 分批处理，无内存溢出 | 依赖硬件，不纳入自动化测试 |
 
 ### 2.5 两阶段扫描测试 (`tests/test_checker.py` — `TestTwoPhaseProgress`)
 
@@ -131,7 +131,7 @@
 
 | 用例 ID | 测试内容 | 输入 | 预期输出 | 验收标准 |
 |---------|---------|------|---------|---------|
-| TC-LARGE-001 | 大文件多 worker | 小文件 + 大文件 (>500MB)，worker=2 | 两个文件均被检测 | 大文件内联处理不丢失 |
+| TC-LARGE-001 | 大文件多 worker | 小文件 + monkeypatch 模拟大文件 (>500MB)，worker=2 | 两个文件均被检测 | 大文件内联处理不丢失 |
 | TC-LARGE-002 | 大文件单 worker | 大文件 (>500MB)，worker=1 | 正常匹配 | 单 worker 模式正确 |
 
 ### 2.7 文件内存估算测试 (`tests/test_checker.py` — `TestEstimateFileBytes`)
@@ -242,5 +242,5 @@ pytest tests/ -v -m integration
 pytest tests/ --cov=src --cov-report=html
 
 # 单文件单用例
-pytest tests/test_checker.py::test_match_keywords -v
+pytest tests/test_checker.py::TestMatchKeywords::test_single_match -v
 ```

@@ -2,7 +2,6 @@ import os
 import pytest
 
 from src.checker import (
-    discover_files,
     _match_keywords,
     _extract_context,
     scan_single_file,
@@ -84,32 +83,35 @@ class TestExtractContext:
         assert ctx == "在结尾机密"
 
 
-class TestDiscoverFiles:
+class TestPhase1Discovery:
     def test_finds_supported_formats(self, tmp_path):
-        (tmp_path / "a.txt").write_text("test")
-        (tmp_path / "b.pdf").write_bytes(b"%PDF")
-        (tmp_path / "c.docx").write_bytes(b"PK")
-        files = discover_files(str(tmp_path))
-        assert len(files) == 3
+        (tmp_path / "a.txt").write_text("国家机密", encoding="utf-8")
+        from docx import Document
+        doc = Document()
+        doc.add_paragraph("国家机密")
+        doc.save(str(tmp_path / "b.docx"))
+        result = scan_directory(str(tmp_path), ["国家机密"])
+        assert len(result["results"]) + len(result["failures"]) == 2
 
     def test_ignores_unsupported(self, tmp_path):
-        (tmp_path / "a.txt").write_text("test")
+        (tmp_path / "a.txt").write_text("国家机密", encoding="utf-8")
         (tmp_path / "b.jpg").write_bytes(b"\xff\xd8")
-        files = discover_files(str(tmp_path))
-        assert len(files) == 1
-        assert files[0].endswith("a.txt")
+        result = scan_directory(str(tmp_path), ["国家机密"])
+        total = len(result["results"]) + len(result["failures"])
+        assert total == 1
 
     def test_recursive(self, tmp_path):
         sub = tmp_path / "sub"
         sub.mkdir()
-        (tmp_path / "a.txt").write_text("test")
-        (sub / "b.txt").write_text("test")
-        files = discover_files(str(tmp_path))
-        assert len(files) == 2
+        (tmp_path / "a.txt").write_text("国家机密", encoding="utf-8")
+        (sub / "b.txt").write_text("国家机密", encoding="utf-8")
+        result = scan_directory(str(tmp_path), ["国家机密"])
+        assert len(result["results"]) == 2
 
     def test_empty_dir(self, tmp_path):
-        files = discover_files(str(tmp_path))
-        assert files == []
+        result = scan_directory(str(tmp_path), ["机密"])
+        assert result["results"] == []
+        assert result["failures"] == []
 
 
 class TestScanSingleFile:
@@ -173,11 +175,35 @@ class TestScanSingleFile:
         assert len(result.matches) == 1
 
     def test_case_insensitive_scan(self, tmp_path):
-        """大小写不敏感扫描"""
         f = tmp_path / "test.txt"
         f.write_text("This is SECRET data", encoding="utf-8")
         result = scan_single_file(str(f), ["secret"], 50)
         assert len(result.matches) == 1
+
+    def test_scan_docx_with_table(self, tmp_path):
+        from docx import Document
+        path = str(tmp_path / "test_table.docx")
+        doc = Document()
+        doc.add_paragraph("普通段落")
+        t = doc.add_table(rows=2, cols=2)
+        t.cell(0, 0).text = "表格中的国家机密"
+        t.cell(0, 1).text = "普通内容"
+        doc.save(path)
+        result = scan_single_file(path, ["国家机密"], 50)
+        assert len(result.matches) >= 1
+
+    def test_scan_pptx_with_table(self, tmp_path):
+        from pptx import Presentation
+        from pptx.util import Inches
+        path = str(tmp_path / "test_table.pptx")
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[5])
+        table_shape = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(4), Inches(2))
+        table_shape.table.cell(0, 0).text = "表格中的国家机密"
+        table_shape.table.cell(0, 1).text = "普通内容"
+        prs.save(path)
+        result = scan_single_file(path, ["国家机密"], 50)
+        assert len(result.matches) >= 1
 
 
 class TestScanDirectory:
@@ -315,15 +341,6 @@ class TestMultiWorkerEdgeCases:
         assert len(result["failures"]) == 1
 
 
-class TestDiscoverFilesAdvanced:
-    def test_custom_extensions(self, tmp_path):
-        (tmp_path / "a.txt").write_text("test")
-        (tmp_path / "b.pdf").write_bytes(b"%PDF")
-        files = discover_files(str(tmp_path), extensions={".txt"})
-        assert len(files) == 1
-        assert files[0].endswith("a.txt")
-
-
 class TestParserByExt:
     def test_pdf_parser(self):
         from src.checker import _parser_by_ext
@@ -400,6 +417,56 @@ class TestTwoPhaseProgress:
         assert "扫描中" in out
 
 
+class TestPhase1ZeroStat:
+    def test_single_worker_no_stat_calls(self, tmp_path, monkeypatch):
+        for i in range(3):
+            (tmp_path / f"f{i}.txt").write_text(f"国家机密{i}", encoding="utf-8")
+        call_count = 0
+        original_getsize = os.path.getsize
+
+        def counting_getsize(p):
+            nonlocal call_count
+            call_count += 1
+            return original_getsize(p)
+
+        monkeypatch.setattr(os.path, "getsize", counting_getsize)
+        result = scan_directory(str(tmp_path), ["国家机密"], num_workers=1)
+        assert len(result["results"]) == 3
+        assert call_count == 0
+
+    def test_multi_worker_stat_only_in_phase2(self, tmp_path, monkeypatch):
+        for i in range(5):
+            (tmp_path / f"f{i}.txt").write_text(f"国家机密{i}", encoding="utf-8")
+        original_getsize = os.path.getsize
+        phase1_calls = 0
+        phase2_calls = 0
+        in_phase2 = False
+
+        def tracking_getsize(p):
+            nonlocal phase1_calls, phase2_calls, in_phase2
+            if in_phase2:
+                phase2_calls += 1
+            else:
+                phase1_calls += 1
+            return original_getsize(p)
+
+        monkeypatch.setattr(os.path, "getsize", tracking_getsize)
+
+        from unittest.mock import patch
+        original_walk = os.walk
+
+        def tracking_walk(d):
+            nonlocal in_phase2
+            yield from original_walk(d)
+            in_phase2 = True
+
+        with patch("src.checker.os.walk", tracking_walk):
+            result = scan_directory(str(tmp_path), ["国家机密"], num_workers=2)
+        assert len(result["results"]) == 5
+        assert phase1_calls == 0
+        assert phase2_calls == 5
+
+
 class TestLargeFileInline:
     def test_large_file_goes_inline(self, tmp_path, monkeypatch):
         (tmp_path / "small.txt").write_text("国家机密", encoding="utf-8")
@@ -415,25 +482,35 @@ class TestLargeFileInline:
         assert len(result["results"]) == 1
 
 
-class TestEstimateFileBytes:
+class TestGetFileSize:
     def test_regular_file(self, tmp_path):
         f = tmp_path / "test.txt"
         f.write_text("hello", encoding="utf-8")
-        from src.checker import _estimate_file_bytes
-        est = _estimate_file_bytes(str(f))
-        assert est == 5
-
-    def test_archive_file_multiplier(self, tmp_path):
-        f = tmp_path / "test.zip"
-        f.write_bytes(b"x" * 100)
-        from src.checker import _estimate_file_bytes
-        est = _estimate_file_bytes(str(f))
-        assert est == 500
+        from src.checker import _get_file_size
+        assert _get_file_size(str(f)) == 5
 
     def test_nonexistent_file(self):
-        from src.checker import _estimate_file_bytes
-        est = _estimate_file_bytes("/nonexistent/file.txt")
-        assert est == 0
+        from src.checker import _get_file_size
+        assert _get_file_size("/nonexistent/file.txt") == 0
+
+
+class TestEstimateBytesFromSize:
+    def test_regular_file(self):
+        from src.checker import _estimate_bytes_from_size
+        assert _estimate_bytes_from_size(100, ".txt") == 100
+
+    def test_archive_file_multiplier(self):
+        from src.checker import _estimate_bytes_from_size
+        assert _estimate_bytes_from_size(100, ".zip") == 500
+
+    def test_targz_multiplier(self):
+        from src.checker import _estimate_bytes_from_size
+        assert _estimate_bytes_from_size(200, ".tgz") == 1000
+
+    def test_zero_size(self):
+        from src.checker import _estimate_bytes_from_size
+        assert _estimate_bytes_from_size(0, ".txt") == 0
+        assert _estimate_bytes_from_size(0, ".zip") == 0
 
 
 class TestMemoryThrottling:

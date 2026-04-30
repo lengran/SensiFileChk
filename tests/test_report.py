@@ -134,6 +134,13 @@ class TestGenerateReport:
         result = _highlight_keyword("some text", "")
         assert result == "some text"
 
+    def test_highlight_preserves_original_case(self):
+        result = _highlight_keyword("This is SECRET data", "secret")
+        assert '<mark class="highlight">SECRET</mark>' in result
+
+        result2 = _highlight_keyword("Mixed SeCrEt case", "secret")
+        assert '<mark class="highlight">SeCrEt</mark>' in result2
+
     def test_matched_directory_auto_expanded(self, tmp_path):
         sub = tmp_path / "subdir"
         sub.mkdir()
