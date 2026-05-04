@@ -179,7 +179,6 @@ BaseParser (抽象基类)
 - `scan_directory(dir_path: str, keywords: list, ocr_enabled: bool, num_workers: int, check_archives: bool) -> dict` — 执行扫描
 - `_match_keywords(text: str, keywords: list) -> list[Match]` — 关键词匹配（支持子串匹配）
 - `_extract_context(text: str, start: int, end: int, context_chars: int = 50) -> str` — 提取上下文
-- `_estimate_file_bytes(fpath: str) -> int` — 估算文件内存占用（压缩包 ×5）[已拆分]
 - `_get_file_size(fpath: str) -> int` — 获取文件磁盘大小（OSError 时返回 0）
 - `_estimate_bytes_from_size(raw_size: int, ext: str) -> int` — 纯计算：压缩包磁盘大小 ×5，普通文件原样返回
 - `_format_discovery(count: int) -> str` — 格式化阶段 1 进度

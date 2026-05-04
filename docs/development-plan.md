@@ -289,7 +289,7 @@ Phase 2 和 Phase 3 可部分并行，但推荐按顺序以保持一致性。
   - 项目结构说明
 
 - [x] 4.5 端到端验证
-  - 255 条测试全部通过
+  - 262 条测试全部通过
   - 新增测试类：TestTwoPhaseProgress, TestLargeFileInline, TestEstimateFileBytes, TestMemoryThrottling, TestBrokenPoolRecovery
 
 ### 验收标准

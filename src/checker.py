@@ -208,11 +208,11 @@ def scan_directory(
                 continue
             file_list.append(os.path.join(root, fname))
         msg = _format_discovery(len(file_list))
-        _last_time = _throttled_print(_last_time, 5.0, msg)
+        _last_time = _throttled_print(_last_time, 1.0, msg)
 
     total = len(file_list)
     if total > 0:
-        sys.stdout.write(f"\r{_format_discovery(total)}\n")
+        sys.stdout.write(f"\r{_format_discovery(total)}")
         sys.stdout.flush()
 
     def _handle_fr(fr):
