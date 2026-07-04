@@ -9,11 +9,11 @@
 | 组件 | 技术选型 | 说明 |
 |------|---------|------|
 | 语言 | Python 3.10+ | 跨平台，生态丰富 |
-| 并行框架 | `concurrent.futures.ProcessPoolExecutor` | 多核并行，避免 GIL 限制 |
+| 并行框架 | `concurrent.futures.ProcessPoolExecutor`（spawn 上下文） | 多核并行，避免 GIL 限制；显式 spawn 启动方式兼容 WSL1/Windows/Linux/macOS |
 | PDF 解析（文本） | `pymupdf` | 比 PyPDF2 更稳定，支持文本提取 |
 | PDF 解析（图片/OCR） | `pytesseract` + `Pillow` | 可选 OCR 开关 |
 | Office 文档 | `python-docx` / `python-pptx` / `openpyxl` | 新版 .docx/.pptx/.xlsx |
-| 旧版 Office (.doc/.xls/.ppt) | `antiword` (Linux) / `pywin32` (Windows) | 平台自动检测 |
+| 旧版 Office (.doc/.xls/.ppt) | `antiword`/`catdoc` 套件 (Linux/macOS) / `pywin32` (Windows) | 平台自动检测 |
 | 压缩包解析 | `zipfile` / `tarfile` / `gzip` (标准库) + `rarfile` / `py7zr` (第三方) | 支持 zip/tar/tgz/gz/rar/7z |
 | Web 管理端 | FastAPI + Jinja2 | 轻量、异步 |
 | HTML 报告 | 原生 HTML + CSS + JS | 零依赖，目录折叠 |
@@ -78,7 +78,7 @@ sensi-check/
 - `add_keyword(word: str) -> None` — 添加单个关键词
 - `add_keywords(words: list[str]) -> None` — 批量添加关键词
 - `remove_keyword(word: str) -> bool` — 删除单个关键词
-- 文件锁机制：`threading.Lock` 保护事务原子性 + `fcntl`/`msvcrt` 文件锁防止 CLI 和 Web 并发冲突
+- 文件锁机制：`threading.Lock` 保护事务原子性 + `fcntl`/`msvcrt` 文件锁防止 CLI 和 Web 并发冲突；写操作须 `f.flush()` + `os.fsync()` 落盘后方可释放排他锁，避免其他进程在截断后读到空文件
 
 ### 4.2 解析器模块 (`src/parsers/`)
 
@@ -94,8 +94,8 @@ BaseParser (抽象基类)
 │   ├── .pptx → python-pptx
 │   ├── .xlsx → openpyxl
 │   ├── .doc  → antiword (Linux) / catdoc (macOS) / win32com (Windows)
-│   ├── .xls  → antiword (Linux) / catdoc (macOS) / win32com (Windows)
-│   └── .ppt  → antiword (Linux) / catdoc (macOS) / win32com (Windows)
+│   ├── .xls  → xls2csv (Linux/macOS) / win32com (Windows)
+│   └── .ppt  → catppt (Linux/macOS) / win32com (Windows)
 └── ArchiveParser
     ├── .zip  → zipfile（标准库）
     ├── .tar  → tarfile（标准库）
@@ -176,7 +176,7 @@ BaseParser (抽象基类)
 ```
 
 **关键函数**:
-- `scan_directory(dir_path: str, keywords: list, ocr_enabled: bool, num_workers: int, check_archives: bool) -> dict` — 执行扫描
+- `scan_directory(dir_path: str, keywords: list, context_chars: int = 50, num_workers: int = 1, ocr_enabled: bool = False, check_archives: bool = True, verbose: bool = False) -> dict` — 执行扫描
 - `_match_keywords(text: str, keywords: list) -> list[Match]` — 关键词匹配（支持子串匹配）
 - `_extract_context(text: str, start: int, end: int, context_chars: int = 50) -> str` — 提取上下文
 - `_get_file_size(fpath: str) -> int` — 获取文件磁盘大小（OSError 时返回 0）
@@ -222,10 +222,10 @@ BaseParser (抽象基类)
 - 每个匹配项显示文件名、上下文
 
 **关键函数**:
-- `generate_report(results: dict, failures: list, output_path: str, scan_dir: str) -> None`
-- `_build_tree(results: dict) -> dict` — 将扁平结果构建树形结构
-- `_render_tree(node: dict, level: int) -> str` — 递归渲染 HTML
-- `_render_failures(failures: list) -> str` — 渲染检查失败区域
+- `generate_report(scan_result: dict, output_path: str, scan_dir: str, keywords: list[str], elapsed: float = 0.0) -> None`
+- `_build_tree(results: list[FileResult], scan_dir: str) -> dict` — 将扁平结果构建树形结构
+- `_render_tree(node: dict, level: int, breadcrumb: list = None) -> str` — 递归渲染 HTML
+- `_render_failures(failures: list[FileResult], scan_dir: str) -> str` — 渲染检查失败区域
 
 ### 4.5 CLI 入口 (`src/cli.py`)
 
@@ -324,6 +324,7 @@ GET  /api/cli/generate    — 生成 CLI 命令字符串
 ## 6. 并行设计
 
 - 使用 `ProcessPoolExecutor`，worker 数量默认等于 CPU 核心数，可通过 `-w` 参数调整
+- **显式指定 `spawn` 启动方式**（`multiprocessing.get_context("spawn")` 传入 `mp_context`）：Python 3.14 在 Linux 将默认启动方式从 `fork` 改为 `forkserver`，而 `forkserver` 依赖 `AF_UNIX` 域套接字，在 WSL1 上存在缺陷会触发 `OSError: [Errno 22] Invalid argument`；显式使用 `spawn` 可在 WSL1/Windows/Linux/macOS 上稳定运行，且无 `fork` 的线程死锁风险
 - 每个文件独立处理，无共享状态，天然安全（内存隔离）
 - 文件列表在主进程构建，worker 只负责解析和匹配
 - 结果汇总在主进程完成
@@ -378,11 +379,12 @@ rarfile>=4.0             # .rar 解压（需系统安装 unrar）
 py7zr>=0.20.0            # .7z 解压（纯 Python）
 fastapi>=0.104.0         # Web 管理端
 jinja2>=3.1.2            # Web 模板
+markupsafe>=2.0          # Web 模板 HTML 安全转义
 uvicorn>=0.24.0          # Web 服务器
 
 # 系统依赖（非 Python 包）
-# antiword               # .doc/.xls/.ppt 旧格式（Linux）
-# catdoc                 # .doc/.xls/.ppt 旧格式（macOS）
+# antiword               # .doc 旧格式（Linux）
+# catdoc                 # .doc 旧格式（macOS），含 xls2csv/catppt 处理 .xls/.ppt
 # unrar                  # .rar 解压（所有平台）
 # tesseract-ocr          # OCR（所有平台）
 ```
@@ -411,17 +413,19 @@ pip install -e .
 | 功能 | Linux | macOS | Windows |
 |------|-------|-------|---------|
 | TXT/PDF/新版 Office | 支持 | 支持 | 支持 |
-| 旧版 Office (.doc/.xls/.ppt) | `antiword` | `catdoc` | `pywin32` |
+| 旧版 Office .doc | `antiword` | `catdoc` | `pywin32` |
+| 旧版 Office .xls | `xls2csv` | `xls2csv` | `pywin32` |
+| 旧版 Office .ppt | `catppt` | `catppt` | `pywin32` |
 | RAR 解压 | `rarfile` + `unrar` | `rarfile` + `unrar` | `rarfile` + `unrar.exe` |
 | 7Z 解压 | `py7zr`（纯 Python） | `py7zr`（纯 Python） | `py7zr`（纯 Python） |
 | OCR | `pytesseract` + `tesseract-ocr` | `pytesseract` + `tesseract-ocr` | `pytesseract` + `tesseract-ocr` |
 
 **各平台安装命令**:
-- **Linux**: `apt install antiword unrar tesseract-ocr` 或 `yum install antiword unrar tesseract`
+- **Linux**: `apt install antiword catdoc unrar tesseract-ocr` 或 `yum install antiword catdoc unrar tesseract`
 - **macOS**: `brew install catdoc unrar tesseract`
 - **Windows**: 手动安装 `unrar.exe` 和 `tesseract-ocr`，`pywin32` 通过 `pip install pywin32` 安装
 
-**纯 Python 优先**: `py7zr` 是纯 Python 实现，无需系统安装；`pywin32` 仅 Windows 可用；macOS 下使用 `catdoc` 替代 `antiword`。
+**纯 Python 优先**: `py7zr` 是纯 Python 实现，无需系统安装；`pywin32` 仅 Windows 可用；macOS 下使用 `catdoc` 替代 `antiword`；Linux/macOS 下 `.xls`/`.ppt` 分别使用 `xls2csv`/`catppt`（均来自 `catdoc` 包）。
 
 ## 10. 安全考虑
 
@@ -429,4 +433,5 @@ pip install -e .
 - OCR 处理在本地完成，图片不上传
 - 敏感词库存储在本地 JSON 文件，不加密（用户可自行加密存储）
 - Web 管理端仅绑定 `127.0.0.1`，不暴露到外部网络
-- 前端 XSS 防护：`escapeHtml()` / `escapeJs()` 辅助函数处理用户输入
+- 前端 XSS 防护：`escapeHtml()` / `escapeJs()` 辅助函数处理用户输入；`tojson` 过滤器对 `<`/`>`/`&`/`'` 做 Unicode 转义，防止 `<script>` 块内 JSON 嵌入的 XSS
+- 配置文件并发安全：`threading.Lock` 保护进程内线程安全，`fcntl`（Unix）/`msvcrt`（Windows）文件锁保护跨进程并发，`_atomic_read_write` 在单次排他锁内完成 read-modify-write；写操作须在释放排他锁前 `f.flush()` + `os.fsync()` 落盘，确保其他进程拿到锁时读到完整 JSON（而非截断后的空文件）

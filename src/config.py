@@ -14,14 +14,28 @@ if sys.platform == "win32":
     import msvcrt
 
     def _lock_file_shared(f):
-        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(0)
+        if size == 0:
+            size = 1
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, size)
+        f._msvcrt_lock_size = size
 
     def _lock_file_exclusive(f):
-        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(0)
+        if size == 0:
+            size = 1
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, size)
+        f._msvcrt_lock_size = size
 
     def _unlock_file(f):
         try:
-            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            size = getattr(f, "_msvcrt_lock_size", 1)
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, size)
         except OSError:
             pass
 else:
@@ -63,15 +77,22 @@ def save_keywords(keywords: list, ocr_enabled: bool) -> None:
     _ensure_config_dir()
     unique_keywords = list(dict.fromkeys(keywords))
     data = {"keywords": unique_keywords, "ocr_enabled": ocr_enabled}
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+    if not os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(dict(_DEFAULT_CONFIG), f, ensure_ascii=False, indent=2)
+    with open(CONFIG_PATH, "r+", encoding="utf-8") as f:
         _lock_file_exclusive(f)
         try:
+            f.seek(0)
+            f.truncate()
             json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
         finally:
             _unlock_file(f)
 
 
-def _atomic_read_write(read_data, modify_fn):
+def _atomic_read_write(modify_fn):
     _ensure_config_dir()
     if not os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -86,9 +107,11 @@ def _atomic_read_write(read_data, modify_fn):
             f.seek(0)
             f.truncate()
             json.dump(config, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+            return config
         finally:
             _unlock_file(f)
-    return config
 
 
 def add_keywords(words: list[str]) -> None:
@@ -99,7 +122,7 @@ def add_keywords(words: list[str]) -> None:
                 if word and word not in keywords:
                     keywords.append(word)
             return config
-        _atomic_read_write(None, _modify)
+        _atomic_read_write(_modify)
 
 
 def add_keyword(word: str) -> None:
@@ -109,7 +132,7 @@ def add_keyword(word: str) -> None:
             if word and word not in keywords:
                 keywords.append(word)
             return config
-        _atomic_read_write(None, _modify)
+        _atomic_read_write(_modify)
 
 
 def remove_keyword(word: str) -> bool:
@@ -123,5 +146,5 @@ def remove_keyword(word: str) -> bool:
                 keywords.remove(word)
                 was_present = True
             return config
-        _atomic_read_write(None, _modify)
+        _atomic_read_write(_modify)
     return was_present

@@ -226,3 +226,24 @@ class TestCrossProcessConfigSafety:
         assert "ocr_enabled" in data, "ocr_enabled 字段丢失"
         assert isinstance(data["keywords"], list), "keywords 类型损坏"
 
+    def test_multiprocess_high_concurrency_no_decode_error(self, isolated_test_config):
+        import multiprocessing
+
+        config_path = isolated_test_config
+        ctx = multiprocessing.get_context("spawn")
+        words = [f"hc词{i}" for i in range(20)]
+        processes = [ctx.Process(target=_add_word_in_process, args=(config_path, w)) for w in words]
+
+        for p in processes:
+            p.start()
+        for p in processes:
+            p.join(timeout=60)
+
+        exit_codes = [p.exitcode for p in processes]
+        crashed = [(i, c) for i, c in enumerate(exit_codes) if c != 0]
+        assert not crashed, f"进程异常退出（疑似释放锁前未落盘导致读到空文件触发 JSONDecodeError）: {crashed}"
+
+        result = load_keywords()
+        for word in words:
+            assert word in result["keywords"], f"高并发写入丢失: {word}"
+
