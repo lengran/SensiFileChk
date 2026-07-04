@@ -15,6 +15,20 @@ def _make_txt(tmp_path, name: str = "inner.txt", content: str = "压缩包内敏
     return str(f)
 
 
+def _rar_fixture(name):
+    try:
+        import rarfile
+        rarfile.tool_setup()
+    except ImportError:
+        pytest.skip("rarfile not installed")
+    except Exception:
+        pytest.skip("unrar not installed")
+    fixture = os.path.join(os.path.dirname(__file__), "fixtures", name)
+    if not os.path.exists(fixture):
+        pytest.skip(f"RAR 固件未生成: {name}（在已安装 rar 的机器上运行 tests/fixtures/generate_rar_fixtures.py）")
+    return fixture
+
+
 @pytest.fixture
 def txt_parser():
     return TxtParser()
@@ -290,33 +304,10 @@ class TestArchiveParser:
         with pytest.raises(ParserError):
             archive_parser.parse(zip_path)
 
-    def test_rar(self, archive_parser, tmp_path):
-        try:
-            import rarfile
-        except ImportError:
-            pytest.skip("rarfile not installed")
-        try:
-            rarfile.tool_setup()
-        except Exception:
-            pytest.skip("unrar not installed")
-        import zipfile
-        inner = self._make_txt(tmp_path, "inner.txt", "rar内敏感词")
-        zip_path = str(tmp_path / "test.zip")
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            zf.write(inner, "inner.txt")
-        try:
-            import subprocess
-            rar_path = str(tmp_path / "test.rar")
-            r = subprocess.run(
-                ["rar", "a", "-ep", rar_path, inner],
-                capture_output=True, text=True, timeout=30,
-            )
-            if r.returncode != 0:
-                pytest.skip("rar command not available")
-            result = archive_parser.parse(rar_path)
-            assert "rar内敏感词" in result
-        except FileNotFoundError:
-            pytest.skip("rar command not installed")
+    def test_rar(self, archive_parser):
+        rar_path = _rar_fixture("sample.rar")
+        result = archive_parser.parse(rar_path)
+        assert "rar内敏感词" in result
 
     def test_7z(self, archive_parser, tmp_path):
         try:
@@ -434,78 +425,21 @@ class TestPdfOcr:
 
 
 class TestArchiveRarAdvanced:
-    def test_rar_with_directory_entries(self, archive_parser, tmp_path):
-        try:
-            import rarfile
-        except ImportError:
-            pytest.skip("rarfile not installed")
-        try:
-            rarfile.tool_setup()
-        except Exception:
-            pytest.skip("unrar not installed")
-        import subprocess
-        inner = _make_txt(tmp_path, "inner.txt", "rar正常内容")
-        try:
-            rar_path = str(tmp_path / "test_dir.rar")
-            r = subprocess.run(
-                ["rar", "a", rar_path, inner],
-                capture_output=True, text=True, timeout=30,
-            )
-            if r.returncode != 0:
-                pytest.skip("rar command not available")
-            result = archive_parser.parse(rar_path)
-            assert "rar正常内容" in result
-        except FileNotFoundError:
-            pytest.skip("rar command not installed")
+    def test_rar_with_directory_entries(self, archive_parser):
+        rar_path = _rar_fixture("sample_dir.rar")
+        result = archive_parser.parse(rar_path)
+        assert "rar正常内容" in result
 
-    def test_rar_size_limit(self, archive_parser, tmp_path, monkeypatch):
-        try:
-            import rarfile
-        except ImportError:
-            pytest.skip("rarfile not installed")
-        try:
-            rarfile.tool_setup()
-        except Exception:
-            pytest.skip("unrar not installed")
-        import subprocess
-        inner = _make_txt(tmp_path, "big.txt", "x" * 200)
-        try:
-            rar_path = str(tmp_path / "big.rar")
-            r = subprocess.run(
-                ["rar", "a", "-ep", rar_path, inner],
-                capture_output=True, text=True, timeout=30,
-            )
-            if r.returncode != 0:
-                pytest.skip("rar command not available")
-            monkeypatch.setattr("src.parsers.archive.MAX_SIZE", 20)
-            with pytest.raises(ParserError):
-                archive_parser.parse(rar_path)
-        except FileNotFoundError:
-            pytest.skip("rar command not installed")
+    def test_rar_size_limit(self, archive_parser, monkeypatch):
+        rar_path = _rar_fixture("big.rar")
+        monkeypatch.setattr("src.parsers.archive.MAX_SIZE", 20)
+        with pytest.raises(ParserError):
+            archive_parser.parse(rar_path)
 
-    def test_rar_per_file_error(self, archive_parser, tmp_path):
-        try:
-            import rarfile
-        except ImportError:
-            pytest.skip("rarfile not installed")
-        try:
-            rarfile.tool_setup()
-        except Exception:
-            pytest.skip("unrar not installed")
-        import subprocess
-        inner = _make_txt(tmp_path, "inner.txt", "rar内容")
-        try:
-            rar_path = str(tmp_path / "test_per_file.rar")
-            r = subprocess.run(
-                ["rar", "a", "-ep", rar_path, inner],
-                capture_output=True, text=True, timeout=30,
-            )
-            if r.returncode != 0:
-                pytest.skip("rar command not available")
-            result = archive_parser.parse(rar_path)
-            assert "rar内容" in result
-        except FileNotFoundError:
-            pytest.skip("rar command not installed")
+    def test_rar_per_file_error(self, archive_parser):
+        rar_path = _rar_fixture("per_file.rar")
+        result = archive_parser.parse(rar_path)
+        assert "rar内容" in result
 
     def test_rar_not_rar(self, archive_parser, tmp_path):
         try:
